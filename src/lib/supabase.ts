@@ -51,6 +51,7 @@ export interface DrawingPoint {
   y: number;
   color: string;
   brush_size: number;
+  tool?: "brush" | "eraser" | "fill";
 }
 
 export interface DrawingStroke {
@@ -59,5 +60,6 @@ export interface DrawingStroke {
   points: DrawingPoint[];
   color: string;
   brush_size: number;
+  tool: "brush" | "eraser" | "fill";
   created_at: string;
 }
