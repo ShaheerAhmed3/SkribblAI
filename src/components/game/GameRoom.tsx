@@ -451,7 +451,10 @@ const GameRoom: React.FC = () => {
                           <span className="text-lg">{currentWord}</span>
                         </p>
                       </div>
-                      <DrawingCanvas gameId={gameId!} />
+                      <DrawingCanvas
+                        gameId={gameId!}
+                        currentDrawerId={currentDrawer}
+                      />
                     </div>
                   ) : (
                     <div className="text-center py-12">
@@ -471,7 +474,11 @@ const GameRoom: React.FC = () => {
                             .join(" ")}
                         </p>
                       </div>
-                      <DrawingCanvas gameId={gameId!} readOnly />
+                      <DrawingCanvas
+                        gameId={gameId!}
+                        readOnly
+                        currentDrawerId={currentDrawer}
+                      />
                     </div>
                   )}
                 </div>

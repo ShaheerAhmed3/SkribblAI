@@ -57,7 +57,7 @@ export interface DrawingPoint {
 export interface DrawingStroke {
   id: string;
   game_id: string;
-  points: DrawingPoint[];
+  points: any; // Fabric.js path data
   color: string;
   brush_size: number;
   tool: "brush" | "eraser" | "fill";
