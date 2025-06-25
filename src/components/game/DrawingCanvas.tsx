@@ -24,6 +24,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const [currentTool, setCurrentTool] = useState<"brush" | "eraser">("brush");
   const [sizeDropdownOpen, setSizeDropdownOpen] = useState(false);
   const sizeDropdownRef = useRef<HTMLDivElement>(null);
+  const prevCanvasWidthRef = useRef<number | null>(null);
 
   const palette = [
     // Row 1
@@ -75,10 +76,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       backgroundColor: "white",
       width: width,
       height: height,
+      selection: false,
     });
 
     // Store canvas reference
     fabricCanvasRef.current = canvas;
+
+    // Store initial width for future scaling
+    prevCanvasWidthRef.current = width;
 
     // Set loading state to false
     setIsLoading(false);
@@ -89,13 +94,38 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     brush.width = brushSize;
     canvas.freeDrawingBrush = brush;
 
+    // Further disable object interaction/selection
+    // @ts-ignore - fabric Canvas has these props at runtime
+    canvas.interactive = false;
+    canvas.skipTargetFind = true;
+
     // Handle resize
     const handleResize = () => {
       const newWidth = container.clientWidth;
+      const prevWidth = prevCanvasWidthRef.current ?? newWidth;
+      if (newWidth === prevWidth) return;
+
+      const scale = newWidth / prevWidth;
       const newHeight = newWidth * 0.75;
+
+      // Scale all objects proportionally
+      canvas.getObjects().forEach((obj: any) => {
+        obj.scaleX *= scale;
+        obj.scaleY *= scale;
+        obj.left *= scale;
+        obj.top *= scale;
+        obj.setCoords();
+      });
+
+      // Update canvas dimensions
       canvas.setWidth(newWidth);
       canvas.setHeight(newHeight);
+
+      // Rerender canvas
       canvas.renderAll();
+
+      // Update stored width for next resize
+      prevCanvasWidthRef.current = newWidth;
     };
 
     window.addEventListener("resize", handleResize);
@@ -117,6 +147,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       const pathData = stroke.points;
       const path = await fabric.Path.fromObject(pathData);
       if (path) {
+        // Make the path non-selectable and non-interactive
+        path.selectable = false;
+        path.evented = false;
         canvas.add(path);
         canvas.renderAll();
       }
@@ -206,6 +239,10 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const handlePathCreated = (opt: any) => {
       const path = opt.path;
       if (!path) return;
+
+      // Make the path non-selectable and non-interactive
+      path.selectable = false;
+      path.evented = false;
 
       // Convert path to JSON
       const pathData = path.toJSON();
@@ -313,13 +350,18 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   }, [sizeDropdownOpen]);
 
   return (
-    <div className="canvas-container relative">
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-75 rounded-lg z-10">
-          <div className="text-gray-500">Loading canvas...</div>
-        </div>
-      )}
-      <canvas ref={canvasRef} />
+    <div>
+      {/* Canvas with border */}
+      <div className="canvas-container relative">
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-75 rounded-lg z-10">
+            <div className="text-gray-500">Loading canvas...</div>
+          </div>
+        )}
+        <canvas ref={canvasRef} />
+      </div>
+
+      {/* Palette / Tools */}
       {!readOnly && (
         <div className="mt-4 p-4 bg-gray-100 rounded-lg">
           <div className="flex flex-wrap items-center gap-6 justify-start">
@@ -452,17 +494,32 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
                     </div>
                   )}
                 </div>
+                {/* Clear Canvas Button */}
+                <button
+                  onClick={clearCanvas}
+                  className="w-10 h-10 flex items-center justify-center rounded-md border-2 border-gray-400 hover:bg-red-100 hover:border-red-500 transition-transform"
+                  title="Clear canvas"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 6h18"></path>
+                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                    <line x1="10" x2="10" y1="11" y2="17"></line>
+                    <line x1="14" x2="14" y1="11" y2="17"></line>
+                  </svg>
+                </button>
               </div>
             </div>
-
-            {/* Clear Button - last */}
-            <button
-              onClick={clearCanvas}
-              className="order-4 px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors flex items-center gap-2 ml-4"
-              title="Clear canvas"
-            >
-              Clear
-            </button>
           </div>
         </div>
       )}

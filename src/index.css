@@ -42,10 +42,18 @@ code {
   border-radius: 8px;
   background: white;
   cursor: crosshair;
+  overflow: hidden;
 }
 
 .canvas-container canvas {
   border-radius: 6px;
+}
+
+/* Remove border from nested Fabric.js wrapper to avoid double borders */
+.canvas-container .canvas-container {
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 /* Game animations */
