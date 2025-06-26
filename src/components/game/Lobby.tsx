@@ -62,7 +62,7 @@ const Lobby: React.FC = () => {
             name: gameName,
             status: "waiting",
             round: 1,
-            max_rounds: 5,
+            max_rounds: 100,
             created_by: user?.id,
           },
         ])

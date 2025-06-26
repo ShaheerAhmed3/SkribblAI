@@ -19,7 +19,8 @@
     "postcss": "^8.4.32",
     "lucide-react": "^0.294.0",
     "framer-motion": "^10.16.16",
-    "react-hot-toast": "^2.4.1"
+    "react-hot-toast": "^2.4.1",
+    "fabric": "^6.7.0"
   },
   "scripts": {
     "start": "react-scripts start",
