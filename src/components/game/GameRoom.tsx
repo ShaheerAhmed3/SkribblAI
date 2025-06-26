@@ -88,13 +88,12 @@ const GameRoom: React.FC = () => {
     }
   }, [gameId, user]);
 
+  // Subscribe to Realtime changes (only once per room)
   useEffect(() => {
     if (!gameId) return;
 
-    fetchGameData();
-
     const channel = supabase.channel(`game-room:${gameId}`);
-
+    console.log("Subscribing to game room channel:", channel);
     channel
       .on(
         "postgres_changes",
@@ -154,7 +153,13 @@ const GameRoom: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [gameId, fetchGameData]);
+  }, [gameId]); // intentionally exclude fetchGameData so the channel isn't recreated when `user` changes
+
+  // Fetch initial & subsequent game data whenever the room or auth user changes
+  useEffect(() => {
+    if (!gameId) return;
+    fetchGameData();
+  }, [gameId, user, fetchGameData]);
 
   useEffect(() => {
     if (gameStatus === "playing" && timeLeft > 0) {
