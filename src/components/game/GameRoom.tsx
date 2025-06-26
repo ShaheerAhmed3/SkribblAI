@@ -9,7 +9,7 @@ import { loadWordList } from "../../lib/wordList";
 
 const GameRoom: React.FC = () => {
   const { gameId } = useParams<{ gameId: string }>();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
   const [game, setGame] = useState<Game | null>(null);
@@ -90,10 +90,10 @@ const GameRoom: React.FC = () => {
 
   // Subscribe to Realtime changes (only once per room)
   useEffect(() => {
-    if (!gameId) return;
+    // Wait until auth session is ready before opening the Realtime channel
+    if (!gameId || authLoading || !user) return;
 
     const channel = supabase.channel(`game-room:${gameId}`);
-    console.log("Subscribing to game room channel:", channel);
     channel
       .on(
         "postgres_changes",
@@ -141,6 +141,7 @@ const GameRoom: React.FC = () => {
         }
       )
       .subscribe((status, err) => {
+        console.log("game room channel", status, err);
         if (status === "SUBSCRIBED") {
           console.log("Successfully subscribed to game room channel!");
         }
@@ -153,7 +154,7 @@ const GameRoom: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [gameId]); // intentionally exclude fetchGameData so the channel isn't recreated when `user` changes
+  }, [gameId, user?.id, authLoading]); // include auth/loading so the effect runs once the session is available
 
   // Fetch initial & subsequent game data whenever the room or auth user changes
   useEffect(() => {
