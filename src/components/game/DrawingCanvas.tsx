@@ -33,9 +33,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const liveChannelRef = useRef<RealtimeChannel | null>(null);
   const currentPathIdRef = useRef<string | null>(null);
   const lastLiveSendRef = useRef<number>(0);
+  // Tracks last point for each live path
   const remotePathMapRef = useRef<
     Record<string, { lastX: number; lastY: number }>
   >({});
+
+  // Stores the Fabric line objects drawn for each live path so we can
+  // remove them once the real stroke arrives.
+  const remoteLinesMapRef = useRef<Record<string, fabric.Object[]>>({});
 
   const palette = [
     // Row 1
@@ -590,8 +595,30 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           });
           canvas.add(line);
           canvas.renderAll();
+
+          // Keep track of the temporary lines so we can delete them later
+          if (!remoteLinesMapRef.current[pathId]) {
+            remoteLinesMapRef.current[pathId] = [];
+          }
+          remoteLinesMapRef.current[pathId].push(line);
         }
         remotePathMapRef.current[pathId] = { lastX: x, lastY: y };
+      })
+      .on("broadcast", { event: "draw_end" }, ({ payload }) => {
+        if (!fabricCanvasRef.current) return;
+        if (payload.drawerId === user?.id) return;
+
+        const { pathId } = payload;
+        const canvas = fabricCanvasRef.current;
+
+        const objs = remoteLinesMapRef.current[pathId];
+        if (objs) {
+          objs.forEach((obj) => canvas.remove(obj));
+          delete remoteLinesMapRef.current[pathId];
+        }
+        delete remotePathMapRef.current[pathId];
+
+        canvas.renderAll();
       })
       .subscribe((status, err) => {
         if (status === "SUBSCRIBED") {
@@ -642,6 +669,22 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     };
 
     const handleUpLive = () => {
+      if (!currentPathIdRef.current || !liveChannelRef.current) {
+        currentPathIdRef.current = null;
+        return;
+      }
+
+      // Notify viewers that this live stroke is finished so they can
+      // remove the temporary line segments.
+      liveChannelRef.current.send({
+        type: "broadcast",
+        event: "draw_end",
+        payload: {
+          drawerId: user.id,
+          pathId: currentPathIdRef.current,
+        },
+      });
+
       currentPathIdRef.current = null;
     };
 
