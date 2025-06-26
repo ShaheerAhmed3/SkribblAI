@@ -43,7 +43,7 @@ const Lobby: React.FC = () => {
           fetchGames();
         }
       )
-      .subscribe();
+      .subscribe((status, err) => console.log("lobby-channel", status, err));
 
     return () => {
       supabase.removeChannel(channel);
