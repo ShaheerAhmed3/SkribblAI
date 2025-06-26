@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase, Game, GamePlayer, ChatMessage } from "../../lib/supabase";
-import { ArrowLeft, Send, Palette, Eraser, RotateCcw } from "lucide-react";
+import { ArrowLeft, Send } from "lucide-react";
 import toast from "react-hot-toast";
 import DrawingCanvas from "./DrawingCanvas";
+import { loadWordList } from "../../lib/wordList";
 
 const GameRoom: React.FC = () => {
   const { gameId } = useParams<{ gameId: string }>();
@@ -21,49 +22,14 @@ const GameRoom: React.FC = () => {
   const [currentWord, setCurrentWord] = useState<string>("");
   const [timeLeft, setTimeLeft] = useState(60);
   const [gameStatus, setGameStatus] = useState<
-    "waiting" | "playing" | "finished"
+    "waiting" | "choosing_word" | "playing" | "finished"
   >("waiting");
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Word list & choices
+  const [wordList, setWordList] = useState<string[]>([]);
+  const [wordChoices, setWordChoices] = useState<string[]>([]);
 
-  const words = [
-    "cat",
-    "dog",
-    "house",
-    "tree",
-    "car",
-    "book",
-    "phone",
-    "computer",
-    "pizza",
-    "hamburger",
-    "apple",
-    "banana",
-    "sun",
-    "moon",
-    "star",
-    "flower",
-    "bird",
-    "fish",
-    "elephant",
-    "giraffe",
-    "lion",
-    "tiger",
-    "mountain",
-    "ocean",
-    "river",
-    "beach",
-    "forest",
-    "desert",
-    "snow",
-    "rain",
-    "cloud",
-    "wind",
-    "fire",
-    "water",
-    "earth",
-    "air",
-  ];
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const fetchGameData = useCallback(async () => {
     if (!gameId) return;
@@ -210,16 +176,20 @@ const GameRoom: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
+  // Load words once on mount
+  useEffect(() => {
+    loadWordList().then(setWordList);
+  }, []);
+
   const startGame = async () => {
     try {
-      const randomWord = words[Math.floor(Math.random() * words.length)];
       const randomPlayer = players[Math.floor(Math.random() * players.length)];
 
       const { error } = await supabase
         .from("games")
         .update({
-          status: "playing",
-          current_word: randomWord,
+          status: "choosing_word",
+          current_word: "",
           current_drawer: randomPlayer.user_id,
           round: 1,
         })
@@ -227,9 +197,8 @@ const GameRoom: React.FC = () => {
 
       if (error) throw error;
 
-      setTimeLeft(60);
-      setGameStatus("playing");
-      setCurrentWord(randomWord);
+      setGameStatus("choosing_word");
+      setCurrentWord("");
       setCurrentDrawer(randomPlayer.user_id);
     } catch (error: any) {
       console.error("Error starting game:", error);
@@ -251,7 +220,6 @@ const GameRoom: React.FC = () => {
         setGameStatus("finished");
         toast.success("Game finished!");
       } else {
-        const randomWord = words[Math.floor(Math.random() * words.length)];
         const remainingPlayers = players.filter(
           (p) => p.user_id !== currentDrawer
         );
@@ -262,18 +230,59 @@ const GameRoom: React.FC = () => {
           .from("games")
           .update({
             round: nextRound,
-            current_word: randomWord,
+            current_word: "",
             current_drawer: nextDrawer.user_id,
+            status: "choosing_word",
           })
           .eq("id", gameId);
 
-        setTimeLeft(60);
-        setCurrentWord(randomWord);
+        setCurrentWord("");
         setCurrentDrawer(nextDrawer.user_id);
+        setGameStatus("choosing_word");
       }
     } catch (error: any) {
       console.error("Error ending round:", error);
       toast.error(error.message);
+    }
+  };
+
+  // Handle word choices when it's the user's turn to pick
+  useEffect(() => {
+    if (
+      gameStatus === "choosing_word" &&
+      user?.id === currentDrawer &&
+      wordChoices.length === 0 &&
+      wordList.length >= 3
+    ) {
+      const shuffled = [...wordList].sort(() => 0.5 - Math.random());
+      setWordChoices(shuffled.slice(0, 3));
+    }
+
+    // Clean up choices when not needed
+    if (gameStatus !== "choosing_word" && wordChoices.length > 0) {
+      setWordChoices([]);
+    }
+  }, [gameStatus, currentDrawer, user, wordList, wordChoices.length]);
+
+  const chooseWord = async (word: string) => {
+    try {
+      const { error } = await supabase
+        .from("games")
+        .update({
+          current_word: word,
+          status: "playing",
+        })
+        .eq("id", gameId);
+
+      if (error) throw error;
+
+      setCurrentWord(word);
+      setGameStatus("playing");
+      setWordChoices([]);
+      setTimeLeft(60);
+    } catch (error) {
+      console.error("Error choosing word:", error);
+      toast.error("Failed to choose word");
     }
   };
 
@@ -439,6 +448,31 @@ const GameRoom: React.FC = () => {
                     >
                       Start Game (for testing)
                     </button>
+                  )}
+                </div>
+              ) : gameStatus === "choosing_word" ? (
+                <div className="text-center py-12">
+                  {user?.id === currentDrawer ? (
+                    <div>
+                      <h3 className="text-xl font-semibold mb-4">
+                        Choose a word
+                      </h3>
+                      <div className="space-x-4">
+                        {wordChoices.map((word) => (
+                          <button
+                            key={word}
+                            onClick={() => chooseWord(word)}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                          >
+                            {word}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-gray-600">
+                      Waiting for the drawer to choose a word...
+                    </p>
                   )}
                 </div>
               ) : gameStatus === "playing" ? (

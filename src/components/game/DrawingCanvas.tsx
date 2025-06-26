@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
 import * as fabric from "fabric";
+import { RealtimeChannel } from "@supabase/supabase-js";
 
 interface DrawingCanvasProps {
   gameId: string;
@@ -21,10 +22,20 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const isFirstRun = useRef(true);
   const [selectedColor, setSelectedColor] = useState("#000000");
   const [brushSize, setBrushSize] = useState(5);
-  const [currentTool, setCurrentTool] = useState<"brush" | "eraser">("brush");
+  const [currentTool, setCurrentTool] = useState<"brush" | "eraser" | "fill">(
+    "brush"
+  );
   const [sizeDropdownOpen, setSizeDropdownOpen] = useState(false);
   const sizeDropdownRef = useRef<HTMLDivElement>(null);
   const prevCanvasWidthRef = useRef<number | null>(null);
+  const fillActionsRef = useRef<{ x: number; y: number; color: string }[]>([]);
+  /* Live-ink refs */
+  const liveChannelRef = useRef<RealtimeChannel | null>(null);
+  const currentPathIdRef = useRef<string | null>(null);
+  const lastLiveSendRef = useRef<number>(0);
+  const remotePathMapRef = useRef<
+    Record<string, { lastX: number; lastY: number }>
+  >({});
 
   const palette = [
     // Row 1
@@ -77,6 +88,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       width: width,
       height: height,
       selection: false,
+      enableRetinaScaling: false,
     });
 
     // Store canvas reference
@@ -137,39 +149,66 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     };
   }, [readOnly]);
 
+  // Helper to clear local canvas and load all strokes from DB
+  const fetchAndRenderStrokes = async () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    // Clear existing objects
+    canvas.clear();
+    canvas.backgroundColor = "white";
+
+    const { data, error } = await supabase
+      .from("drawing_strokes")
+      .select("*")
+      .eq("game_id", gameId);
+
+    if (error) {
+      console.error("Error fetching strokes:", error);
+      return;
+    }
+
+    if (data) {
+      for (const stroke of data) {
+        await addStrokeToCanvas(stroke);
+      }
+    }
+  };
+
+  // Function to add a stroke to the canvas
+  async function addStrokeToCanvas(stroke: any) {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    if (stroke.tool === "fill") {
+      const ctx = canvas.getContext();
+      if (ctx) {
+        floodFill(
+          ctx as unknown as CanvasRenderingContext2D,
+          0,
+          0,
+          stroke.color
+        );
+      }
+      return;
+    }
+
+    const pathData = stroke.points;
+    const path = await fabric.Path.fromObject(pathData);
+    if (path) {
+      path.selectable = false;
+      path.evented = false;
+      canvas.add(path);
+      canvas.renderAll();
+    }
+  }
+
   // Load existing strokes and subscribe to updates
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!gameId || !canvas) return;
 
-    // Function to add a stroke to the canvas
-    const addStrokeToCanvas = async (stroke: any) => {
-      const pathData = stroke.points;
-      const path = await fabric.Path.fromObject(pathData);
-      if (path) {
-        // Make the path non-selectable and non-interactive
-        path.selectable = false;
-        path.evented = false;
-        canvas.add(path);
-        canvas.renderAll();
-      }
-    };
-
-    // Fetch initial strokes
-    const fetchStrokes = async () => {
-      const { data, error } = await supabase
-        .from("drawing_strokes")
-        .select("*")
-        .eq("game_id", gameId);
-
-      if (error) {
-        console.error("Error fetching strokes:", error);
-      } else if (data) {
-        data.forEach(addStrokeToCanvas);
-      }
-    };
-
-    fetchStrokes();
+    fetchAndRenderStrokes();
 
     // Subscribe to real-time drawing updates
     const subscription = supabase
@@ -183,11 +222,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           filter: `game_id=eq.${gameId}`,
         },
         (payload) => {
-          // If the current user is the drawer, they have already drawn it locally
-          if (user?.id === currentDrawerId) {
-            return;
-          }
-          // Otherwise, add the stroke from the broadcast
           addStrokeToCanvas(payload.new);
         }
       )
@@ -206,16 +240,25 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
             canvas.clear();
             canvas.backgroundColor = "white";
             canvas.renderAll();
+            // After any delete (single undo or full clear) reload remaining strokes
+            fetchAndRenderStrokes();
           }
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === "SUBSCRIBED") {
+          console.log("✅ strokes channel ready");
+        }
+        if (status === "CHANNEL_ERROR") {
+          console.error("strokes channel error", err);
+        }
+      });
 
     // Clean up subscription on unmount
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameId, user?.id, currentDrawerId]);
+  }, [gameId]);
 
   // Clear canvas when the drawer changes
   useEffect(() => {
@@ -250,6 +293,19 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       // Save path to database
       savePath(pathData);
+
+      // Reapply local fills so they persist after canvas rerender
+      fillActionsRef.current.forEach((fill) => {
+        const ctx = canvas.getContext();
+        if (ctx) {
+          floodFill(
+            ctx as unknown as CanvasRenderingContext2D,
+            fill.x,
+            fill.y,
+            fill.color
+          );
+        }
+      });
     };
 
     // Add event listener
@@ -261,23 +317,67 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     };
   }, [readOnly, gameId]);
 
-  // Update brush properties when color, size, or tool changes
+  // Update brush properties or fill tool
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !canvas.freeDrawingBrush) return;
+    if (!canvas) return;
+
+    if (currentTool === "fill") {
+      canvas.isDrawingMode = false;
+    } else {
+      canvas.isDrawingMode = !readOnly;
+    }
+
+    if (!canvas.freeDrawingBrush) return;
 
     const brush = canvas.freeDrawingBrush as fabric.PencilBrush;
 
     if (currentTool === "eraser") {
-      // For eraser, use white color with higher width
       brush.color = "#FFFFFF";
       brush.width = brushSize * 1.5;
-    } else {
-      // For normal brush, use selected color and size
+    } else if (currentTool === "brush") {
       brush.color = selectedColor;
       brush.width = brushSize;
     }
-  }, [selectedColor, brushSize, currentTool]);
+  }, [selectedColor, brushSize, currentTool, readOnly]);
+
+  // Handle fill tool mouse down
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const handleMouseDown = (opt: any) => {
+      if (currentTool !== "fill") return;
+      const evt = opt.e as MouseEvent;
+      const pointer = canvas.getPointer(evt, false);
+      const x = Math.floor(pointer.x);
+      const y = Math.floor(pointer.y);
+
+      // Ensure pointer within canvas bounds
+      if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
+
+      const ctx = canvas.getContext();
+      if (!ctx) return;
+
+      floodFill(
+        ctx as unknown as CanvasRenderingContext2D,
+        x,
+        y,
+        selectedColor
+      );
+
+      // Store fill locally to reapply after future renders
+      fillActionsRef.current.push({ x, y, color: selectedColor });
+
+      // Save fill action to DB
+      saveFill(selectedColor);
+    };
+
+    canvas.on("mouse:down", handleMouseDown);
+    return () => {
+      canvas.off("mouse:down", handleMouseDown);
+    };
+  }, [currentTool, selectedColor]);
 
   // Save path to database
   const savePath = async (pathData: any) => {
@@ -318,6 +418,27 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
   };
 
+  const undoLastStroke = async () => {
+    if (user?.id !== currentDrawerId) return; // only current drawer can undo
+
+    try {
+      const { data, error } = await supabase
+        .from("drawing_strokes")
+        .select("id")
+        .eq("game_id", gameId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+      if (error || !data) return;
+      const lastId = data.id;
+      await supabase.from("drawing_strokes").delete().eq("id", lastId);
+      // Locally reload strokes for immediate feedback
+      await fetchAndRenderStrokes();
+    } catch (err) {
+      console.error("Undo error", err);
+    }
+  };
+
   // Toggle between brush and eraser
   const toggleEraser = () => {
     setCurrentTool(currentTool === "brush" ? "eraser" : "brush");
@@ -326,7 +447,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   // Set color and switch to brush tool
   const handleColorSelect = (color: string) => {
     setSelectedColor(color);
-    setCurrentTool("brush");
+    setCurrentTool((prev) => (prev === "eraser" ? "brush" : prev));
   };
 
   // Close dropdown on outside click
@@ -348,6 +469,192 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [sizeDropdownOpen]);
+
+  // Utility: convert hex to rgba array
+  const hexToRgba = (hex: string) => {
+    let c = hex.replace("#", "");
+    if (c.length === 3) {
+      c = c
+        .split("")
+        .map((ch) => ch + ch)
+        .join("");
+    }
+    const num = parseInt(c, 16);
+    return [(num >> 16) & 255, (num >> 8) & 255, num & 255, 255];
+  };
+
+  // Flood fill implementation (4-way)
+  const floodFill = (
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    fillColor: string
+  ) => {
+    const { width, height } = ctx.canvas;
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+
+    const startPos = (y * width + x) * 4;
+    const targetColor = data.slice(startPos, startPos + 4);
+    const replacementColor = hexToRgba(fillColor);
+
+    // If target color same as replacement, exit
+    if (
+      targetColor[0] === replacementColor[0] &&
+      targetColor[1] === replacementColor[1] &&
+      targetColor[2] === replacementColor[2]
+    ) {
+      return;
+    }
+
+    const stack: [number, number][] = [[x, y]];
+    const matchColor = (index: number) =>
+      data[index] === targetColor[0] &&
+      data[index + 1] === targetColor[1] &&
+      data[index + 2] === targetColor[2];
+
+    const colorPixel = (index: number) => {
+      data[index] = replacementColor[0];
+      data[index + 1] = replacementColor[1];
+      data[index + 2] = replacementColor[2];
+    };
+
+    while (stack.length) {
+      const [nx, ny] = stack.pop()!;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      let idx = (ny * width + nx) * 4;
+      if (!matchColor(idx)) continue;
+      // Move west until edge or different color
+      let wx = nx;
+      while (wx >= 0 && matchColor((ny * width + wx) * 4)) {
+        wx--;
+      }
+      wx++;
+      let ex = nx;
+      while (ex < width && matchColor((ny * width + ex) * 4)) {
+        ex++;
+      }
+      // Fill between wx and ex
+      for (let px = wx; px < ex; px++) {
+        idx = (ny * width + px) * 4;
+        colorPixel(idx);
+        if (ny > 0 && matchColor(idx - width * 4)) stack.push([px, ny - 1]);
+        if (ny < height - 1 && matchColor(idx + width * 4))
+          stack.push([px, ny + 1]);
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  };
+
+  // Save fill action
+  const saveFill = async (color: string) => {
+    if (!user) return;
+    try {
+      const { error } = await supabase.from("drawing_strokes").insert([
+        {
+          game_id: gameId,
+          points: { type: "fill" },
+          color: color,
+          brush_size: 0,
+          tool: "fill",
+        },
+      ]);
+      if (error) throw error;
+    } catch (error) {
+      console.error("Error saving fill:", error);
+    }
+  };
+
+  // ────────────────────────────────────────────
+  // Live-ink channel setup (receive)
+  // ────────────────────────────────────────────
+  useEffect(() => {
+    if (!gameId) return;
+
+    const liveChannel = supabase
+      .channel(`drawing_live:${gameId}`)
+      .on("broadcast", { event: "draw" }, ({ payload }) => {
+        if (!fabricCanvasRef.current) return;
+        if (payload.drawerId === user?.id) return; // ignore ourselves
+
+        const { pathId, x, y, color, width } = payload;
+        const canvas = fabricCanvasRef.current;
+
+        const prev = remotePathMapRef.current[pathId];
+        if (prev) {
+          const line = new fabric.Line([prev.lastX, prev.lastY, x, y], {
+            stroke: color,
+            strokeWidth: width,
+            selectable: false,
+            evented: false,
+          });
+          canvas.add(line);
+          canvas.renderAll();
+        }
+        remotePathMapRef.current[pathId] = { lastX: x, lastY: y };
+      })
+      .subscribe((status, err) => {
+        if (status === "SUBSCRIBED") {
+          console.log("📡 live-ink channel ready");
+        }
+        if (status === "CHANNEL_ERROR") {
+          console.error("live-ink channel error", err);
+        }
+      });
+
+    liveChannelRef.current = liveChannel;
+    return () => {
+      supabase.removeChannel(liveChannel);
+    };
+  }, [gameId]);
+
+  // ────────────────────────────────────────────
+  // Broadcast pointer positions while drawing (drawer only)
+  // ────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    if (user?.id !== currentDrawerId) return; // only drawer sends
+
+    const handleDownLive = () => {
+      currentPathIdRef.current = crypto.randomUUID();
+    };
+
+    const handleMoveLive = (opt: any) => {
+      if (!currentPathIdRef.current || !liveChannelRef.current) return;
+      const now = Date.now();
+      if (now - lastLiveSendRef.current < 25) return; // throttle
+      lastLiveSendRef.current = now;
+
+      const pointer = canvas.getPointer(opt.e as MouseEvent, false);
+      liveChannelRef.current.send({
+        type: "broadcast",
+        event: "draw",
+        payload: {
+          drawerId: user.id,
+          pathId: currentPathIdRef.current,
+          x: pointer.x,
+          y: pointer.y,
+          color: currentTool === "eraser" ? "#FFFFFF" : selectedColor,
+          width: currentTool === "eraser" ? brushSize * 1.5 : brushSize,
+        },
+      });
+    };
+
+    const handleUpLive = () => {
+      currentPathIdRef.current = null;
+    };
+
+    canvas.on("mouse:down", handleDownLive);
+    canvas.on("mouse:move", handleMoveLive);
+    canvas.on("mouse:up", handleUpLive);
+
+    return () => {
+      canvas.off("mouse:down", handleDownLive);
+      canvas.off("mouse:move", handleMoveLive);
+      canvas.off("mouse:up", handleUpLive);
+    };
+  }, [user?.id, currentDrawerId, currentTool, selectedColor, brushSize]);
 
   return (
     <div>
@@ -440,6 +747,32 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
                     <path d="m5 11 9 9"></path>
                   </svg>
                 </button>
+                {/* Fill / Paint Bucket */}
+                <button
+                  onClick={() => setCurrentTool("fill")}
+                  className={`w-10 h-10 flex items-center justify-center rounded-md border-2 transition-transform ${
+                    currentTool === "fill"
+                      ? "border-blue-500 bg-blue-100"
+                      : "border-gray-400 hover:bg-gray-200"
+                  }`}
+                  title="Fill"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M19.4 15a1.65 1.65 0 0 1 0 2.33l-3.57 3.57a2 2 0 0 1-2.83 0l-8.49-8.49a2 2 0 0 1 0-2.83l3.58-3.57a1.65 1.65 0 0 1 2.32 0Z"></path>
+                    <path d="M14.12 5.88 16 4"></path>
+                    <path d="M5 20h.01"></path>
+                  </svg>
+                </button>
                 {/* Size Dropdown Button */}
                 <div className="relative" ref={sizeDropdownRef}>
                   <button
@@ -494,6 +827,28 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
                     </div>
                   )}
                 </div>
+                {/* Undo */}
+                <button
+                  onClick={undoLastStroke}
+                  className={`w-10 h-10 flex items-center justify-center rounded-md border-2 transition-transform border-gray-400 hover:bg-gray-200`}
+                  title="Undo"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 12h18"></path>
+                    <path d="M3 12 9 6"></path>
+                    <path d="M3 12 9 18"></path>
+                  </svg>
+                </button>
                 {/* Clear Canvas Button */}
                 <button
                   onClick={clearCanvas}
