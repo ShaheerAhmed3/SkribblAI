@@ -93,65 +93,83 @@ const GameRoom: React.FC = () => {
     // Wait until auth session is ready before opening the Realtime channel
     if (!gameId || authLoading || !user) return;
 
-    const channel = supabase.channel(`game-room:${gameId}`);
-    channel
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "games",
-          filter: `id=eq.${gameId}`,
-        },
-        (payload) => {
-          const updatedGame = payload.new as Game;
-          setGame(updatedGame);
-          setGameStatus(updatedGame.status);
-          setCurrentDrawer(updatedGame.current_drawer ?? null);
-          setCurrentWord(updatedGame.current_word || "");
+    let cancelled = false;
 
-          if (updatedGame.status === "playing") {
-            setTimeLeft(60);
+    const createChannel = () => {
+      const channel = supabase.channel(`game-room:${gameId}`);
+
+      channel
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "games",
+            filter: `id=eq.${gameId}`,
+          },
+          (payload) => {
+            const updatedGame = payload.new as Game;
+            setGame(updatedGame);
+            setGameStatus(updatedGame.status);
+            setCurrentDrawer(updatedGame.current_drawer ?? null);
+            setCurrentWord(updatedGame.current_word || "");
+
+            if (updatedGame.status === "playing") {
+              setTimeLeft(60);
+            }
           }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "chat_messages",
-          filter: `game_id=eq.${gameId}`,
-        },
-        (payload) => {
-          const newMessage = payload.new as ChatMessage;
-          setMessages((prev) => [...prev, newMessage]);
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "game_players",
-          filter: `game_id=eq.${gameId}`,
-        },
-        () => {
-          fetchGameData(); // Re-fetch all players and game data on change
-        }
-      )
-      .subscribe((status, err) => {
-        console.log("game room channel", status, err);
-        if (status === "SUBSCRIBED") {
-          console.log("Successfully subscribed to game room channel!");
-        }
-        if (status === "CHANNEL_ERROR") {
-          console.error("Channel error:", err);
-          toast.error("Connection to game lost. Please refresh.");
-        }
-      });
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "chat_messages",
+            filter: `game_id=eq.${gameId}`,
+          },
+          (payload) => {
+            const newMessage = payload.new as ChatMessage;
+            setMessages((prev) => [...prev, newMessage]);
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "game_players",
+            filter: `game_id=eq.${gameId}`,
+          },
+          () => {
+            fetchGameData(); // Re-fetch all players and game data on change
+          }
+        )
+        .subscribe((status) => {
+          console.log("game room channel", status);
+
+          if (status === "SUBSCRIBED") {
+            console.log("Successfully subscribed to game room channel!");
+          }
+
+          if (status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
+            console.warn("Channel failed (", status, "), retrying in 3s...");
+            supabase.removeChannel(channel);
+
+            if (!cancelled) {
+              setTimeout(() => {
+                if (!cancelled) createChannel();
+              }, 3000);
+            }
+          }
+        });
+
+      return channel;
+    };
+
+    const channel = createChannel();
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [gameId, user?.id, authLoading]); // include auth/loading so the effect runs once the session is available
