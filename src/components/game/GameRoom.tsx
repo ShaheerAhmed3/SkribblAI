@@ -21,6 +21,7 @@ const GameRoom: React.FC = () => {
   const [currentDrawer, setCurrentDrawer] = useState<string | null>(null);
   const [currentWord, setCurrentWord] = useState<string>("");
   const [timeLeft, setTimeLeft] = useState(60);
+  const [wordChoiceTimeLeft, setWordChoiceTimeLeft] = useState(10);
   const [gameStatus, setGameStatus] = useState<
     "waiting" | "choosing_word" | "playing" | "finished"
   >("waiting");
@@ -28,6 +29,17 @@ const GameRoom: React.FC = () => {
   // Word list & choices
   const [wordList, setWordList] = useState<string[]>([]);
   const [wordChoices, setWordChoices] = useState<string[]>([]);
+
+  // Player tracking for the current round
+  const [correctGuessers, setCorrectGuessers] = useState<Set<string>>(
+    new Set()
+  );
+  const [stillGuessing, setStillGuessing] = useState<Set<string>>(new Set());
+
+  // Track when the current round started (timestamp)
+  const [currentRoundStartedAt, setCurrentRoundStartedAt] = useState<
+    string | null
+  >(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -46,6 +58,51 @@ const GameRoom: React.FC = () => {
       setGameStatus(gameData.status);
       setCurrentDrawer(gameData.current_drawer ?? null);
       setCurrentWord(gameData.current_word || "");
+
+      // Calculate remaining time if game is in progress
+      if (gameData.status === "playing" && gameData.round_started_at) {
+        const startTime = new Date(gameData.round_started_at);
+        const now = new Date();
+        const elapsedSeconds = Math.floor(
+          (now.getTime() - startTime.getTime()) / 1000
+        );
+        const remainingTime = Math.max(0, 60 - elapsedSeconds);
+
+        setTimeLeft(remainingTime);
+        setCurrentRoundStartedAt(gameData.round_started_at);
+
+        // Auto-end round if timer already expired
+        if (remainingTime <= 0) {
+          endRound();
+        }
+      }
+
+      // Calculate remaining time for word choice
+      if (
+        gameData.status === "choosing_word" &&
+        gameData.word_choice_started_at
+      ) {
+        const startTime = new Date(gameData.word_choice_started_at);
+        const now = new Date();
+        const elapsedSeconds = Math.floor(
+          (now.getTime() - startTime.getTime()) / 1000
+        );
+        const remainingTime = Math.max(0, 10 - elapsedSeconds);
+
+        setWordChoiceTimeLeft(remainingTime);
+
+        // Auto-select word if time expired and this client is the drawer
+        if (
+          remainingTime <= 0 &&
+          user?.id === gameData.current_drawer &&
+          wordChoices.length > 0
+        ) {
+          chooseWord(wordChoices[0]);
+        }
+      } else if (gameData.status !== "choosing_word") {
+        // Reset word choice timer when not in choosing phase
+        setWordChoiceTimeLeft(10);
+      }
 
       // Fetch players
       const { data: playersData, error: playersError } = await supabase
@@ -93,83 +150,94 @@ const GameRoom: React.FC = () => {
     // Wait until auth session is ready before opening the Realtime channel
     if (!gameId || authLoading || !user) return;
 
-    let cancelled = false;
+    const channel = supabase.channel(`game-room:${gameId}`);
+    channel
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "games",
+          filter: `id=eq.${gameId}`,
+        },
+        (payload) => {
+          const updatedGame = payload.new as Game;
+          setGame(updatedGame);
+          setGameStatus(updatedGame.status);
+          setCurrentDrawer(updatedGame.current_drawer ?? null);
+          setCurrentWord(updatedGame.current_word || "");
 
-    const createChannel = () => {
-      const channel = supabase.channel(`game-room:${gameId}`);
+          if (updatedGame.status === "playing") {
+            if (updatedGame.round_started_at) {
+              // Calculate remaining time based on server timestamp
+              const startTime = new Date(updatedGame.round_started_at);
+              const now = new Date();
+              const elapsedSeconds = Math.floor(
+                (now.getTime() - startTime.getTime()) / 1000
+              );
+              const remainingTime = Math.max(0, 60 - elapsedSeconds);
 
-      channel
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "games",
-            filter: `id=eq.${gameId}`,
-          },
-          (payload) => {
-            const updatedGame = payload.new as Game;
-            setGame(updatedGame);
-            setGameStatus(updatedGame.status);
-            setCurrentDrawer(updatedGame.current_drawer ?? null);
-            setCurrentWord(updatedGame.current_word || "");
-
-            if (updatedGame.status === "playing") {
+              setTimeLeft(remainingTime);
+              setCurrentRoundStartedAt(updatedGame.round_started_at);
+            } else {
+              // Fallback to 60 seconds if no timestamp available
               setTimeLeft(60);
             }
-          }
-        )
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "chat_messages",
-            filter: `game_id=eq.${gameId}`,
-          },
-          (payload) => {
-            const newMessage = payload.new as ChatMessage;
-            setMessages((prev) => [...prev, newMessage]);
-          }
-        )
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "game_players",
-            filter: `game_id=eq.${gameId}`,
-          },
-          () => {
-            fetchGameData(); // Re-fetch all players and game data on change
-          }
-        )
-        .subscribe((status) => {
-          console.log("game room channel", status);
+          } else if (updatedGame.status === "choosing_word") {
+            if (updatedGame.word_choice_started_at) {
+              // Calculate remaining time for word choice based on server timestamp
+              const startTime = new Date(updatedGame.word_choice_started_at);
+              const now = new Date();
+              const elapsedSeconds = Math.floor(
+                (now.getTime() - startTime.getTime()) / 1000
+              );
+              const remainingTime = Math.max(0, 10 - elapsedSeconds);
 
-          if (status === "SUBSCRIBED") {
-            console.log("Successfully subscribed to game room channel!");
-          }
-
-          if (status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
-            console.warn("Channel failed (", status, "), retrying in 3s...");
-            supabase.removeChannel(channel);
-
-            if (!cancelled) {
-              setTimeout(() => {
-                if (!cancelled) createChannel();
-              }, 3000);
+              setWordChoiceTimeLeft(remainingTime);
+            } else {
+              // Fallback to 10 seconds if no timestamp available
+              setWordChoiceTimeLeft(10);
             }
           }
-        });
-
-      return channel;
-    };
-
-    const channel = createChannel();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "chat_messages",
+          filter: `game_id=eq.${gameId}`,
+        },
+        (payload) => {
+          const newMessage = payload.new as ChatMessage;
+          setMessages((prev) => [...prev, newMessage]);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "game_players",
+          filter: `game_id=eq.${gameId}`,
+        },
+        () => {
+          fetchGameData(); // Re-fetch all players and game data on change
+        }
+      )
+      .subscribe((status, err) => {
+        console.log("game room channel", status, err);
+        if (status === "SUBSCRIBED") {
+          console.log("Successfully subscribed to game room channel!");
+        }
+        if (status === "CHANNEL_ERROR") {
+          console.error("Channel error:", err);
+          toast.error("Connection to game lost. Please refresh.");
+        }
+      });
 
     return () => {
-      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [gameId, user?.id, authLoading]); // include auth/loading so the effect runs once the session is available
@@ -196,9 +264,26 @@ const GameRoom: React.FC = () => {
     }
   }, [gameStatus, timeLeft]);
 
+  // Word choice timer
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    if (gameStatus === "choosing_word" && wordChoiceTimeLeft > 0) {
+      const timer = setInterval(() => {
+        setWordChoiceTimeLeft((prev) => {
+          if (prev <= 1) {
+            // Auto-select a word if the drawer is the current user
+            if (user?.id === currentDrawer && wordChoices.length > 0) {
+              // Choose the first word option
+              chooseWord(wordChoices[0]);
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => clearInterval(timer);
+    }
+  }, [gameStatus, wordChoiceTimeLeft, currentDrawer, user?.id, wordChoices]);
 
   // Load words once on mount
   useEffect(() => {
@@ -206,8 +291,14 @@ const GameRoom: React.FC = () => {
   }, []);
 
   const startGame = async () => {
+    if (players.length < 2) {
+      toast.error("Need at least 2 players to start the game");
+      return;
+    }
+
     try {
       const randomPlayer = players[Math.floor(Math.random() * players.length)];
+      const timestamp = new Date().toISOString();
 
       const { error } = await supabase
         .from("games")
@@ -216,6 +307,7 @@ const GameRoom: React.FC = () => {
           current_word: "",
           current_drawer: randomPlayer.user_id,
           round: 1,
+          word_choice_started_at: timestamp,
         })
         .eq("id", gameId);
 
@@ -231,6 +323,13 @@ const GameRoom: React.FC = () => {
   };
 
   const endRound = async () => {
+    // Clear the canvas for ALL clients by removing the strokes from the DB first
+    try {
+      await supabase.from("drawing_strokes").delete().eq("game_id", gameId);
+    } catch (clrErr) {
+      console.error("Failed to clear drawing_strokes at end of round", clrErr);
+    }
+
     try {
       const nextRound = (game?.round || 1) + 1;
       const isGameFinished = nextRound > (game?.max_rounds || 5);
@@ -238,17 +337,35 @@ const GameRoom: React.FC = () => {
       if (isGameFinished) {
         await supabase
           .from("games")
-          .update({ status: "finished" })
+          .update({
+            status: "finished",
+            round_started_at: null,
+          })
           .eq("id", gameId);
 
         setGameStatus("finished");
         toast.success("Game finished!");
       } else {
-        const remainingPlayers = players.filter(
+        let remainingPlayers = players.filter(
           (p) => p.user_id !== currentDrawer
         );
+
+        // If for some reason there are no remaining players (e.g., state not yet synced),
+        // fall back to using the full players array so we always have a drawer.
+        if (remainingPlayers.length === 0) {
+          remainingPlayers = [...players];
+        }
+
+        // Still no players? Abort gracefully.
+        if (remainingPlayers.length === 0) {
+          console.warn("No available players to become the next drawer.");
+          return;
+        }
+
         const nextDrawer =
           remainingPlayers[Math.floor(Math.random() * remainingPlayers.length)];
+
+        const timestamp = new Date().toISOString();
 
         await supabase
           .from("games")
@@ -257,12 +374,18 @@ const GameRoom: React.FC = () => {
             current_word: "",
             current_drawer: nextDrawer.user_id,
             status: "choosing_word",
+            round_started_at: null,
+            word_choice_started_at: timestamp,
           })
           .eq("id", gameId);
 
         setCurrentWord("");
         setCurrentDrawer(nextDrawer.user_id);
         setGameStatus("choosing_word");
+
+        // Reset guessing state for new round
+        setCorrectGuessers(new Set());
+        setStillGuessing(new Set());
       }
     } catch (error: any) {
       console.error("Error ending round:", error);
@@ -290,11 +413,15 @@ const GameRoom: React.FC = () => {
 
   const chooseWord = async (word: string) => {
     try {
+      // Create a timestamp for this round
+      const timestamp = new Date().toISOString();
+
       const { error } = await supabase
         .from("games")
         .update({
           current_word: word,
           status: "playing",
+          round_started_at: timestamp,
         })
         .eq("id", gameId);
 
@@ -304,6 +431,10 @@ const GameRoom: React.FC = () => {
       setGameStatus("playing");
       setWordChoices([]);
       setTimeLeft(60);
+
+      // Set the round start timestamp
+      setCurrentRoundStartedAt(timestamp);
+      console.log(`New round started at ${timestamp}`);
     } catch (error) {
       console.error("Error choosing word:", error);
       toast.error("Failed to choose word");
@@ -319,12 +450,17 @@ const GameRoom: React.FC = () => {
         isGuess &&
         newMessage.toLowerCase().trim() === currentWord.toLowerCase();
 
+      // If the guess is correct, we replace the actual guess with a generic success message
+      const messageText = isCorrect
+        ? `${user?.user_metadata?.username || "Anonymous"} guessed the word!`
+        : newMessage;
+
       const { error } = await supabase.from("chat_messages").insert([
         {
           game_id: gameId,
           user_id: user?.id,
           username: user?.user_metadata?.username || "Anonymous",
-          message: newMessage,
+          message: messageText,
           is_guess: isGuess,
           is_correct: isCorrect,
         },
@@ -332,8 +468,12 @@ const GameRoom: React.FC = () => {
 
       if (error) throw error;
 
-      if (isCorrect) {
+      if (isCorrect && user?.id) {
         toast.success("Correct guess!");
+
+        // State will be updated via the messages useEffect
+        // to ensure all clients stay in sync
+
         // Update player score
         await supabase
           .from("game_players")
@@ -352,9 +492,209 @@ const GameRoom: React.FC = () => {
     }
   };
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Process correct guesses from messages for current round only
+  useEffect(() => {
+    if (gameStatus !== "playing" || !currentRoundStartedAt) return;
+
+    // Create sets to track current state
+    const currentCorrectGuessers = new Set(correctGuessers);
+    const currentStillGuessing = new Set(stillGuessing);
+    let stateChanged = false;
+
+    // Find all correct guesses from the current round only
+    const currentRoundMessages = messages.filter(
+      (m) =>
+        m.is_correct &&
+        m.user_id &&
+        new Date(m.created_at) >= new Date(currentRoundStartedAt)
+    );
+
+    // Process each correct guess from current round
+    currentRoundMessages.forEach((message) => {
+      if (message.user_id && currentStillGuessing.has(message.user_id)) {
+        // Move player from stillGuessing to correctGuessers
+        currentStillGuessing.delete(message.user_id);
+        currentCorrectGuessers.add(message.user_id);
+        stateChanged = true;
+        console.log(
+          `Player ${message.user_id} guessed correctly in current round`
+        );
+      }
+    });
+
+    // Update state only if changed (avoid unnecessary re-renders)
+    if (stateChanged) {
+      setCorrectGuessers(currentCorrectGuessers);
+      setStillGuessing(currentStillGuessing);
+
+      console.log("Updated player tracking for current round:", {
+        roundStartedAt: currentRoundStartedAt,
+        correctGuessers: Array.from(currentCorrectGuessers),
+        stillGuessing: Array.from(currentStillGuessing),
+      });
+    }
+  }, [
+    messages,
+    gameStatus,
+    currentRoundStartedAt,
+    correctGuessers,
+    stillGuessing,
+  ]);
+
+  // Initialize player tracking state at the start of a new round
+  useEffect(() => {
+    if (gameStatus === "playing" && currentDrawer) {
+      const newCorrectGuessers = new Set<string>();
+      const newStillGuessing = new Set<string>();
+
+      // Add the drawer to correct guessers (they already know the word)
+      newCorrectGuessers.add(currentDrawer);
+
+      // Add all other players to still guessing
+      players.forEach((player) => {
+        if (player.user_id !== currentDrawer) {
+          newStillGuessing.add(player.user_id);
+        }
+      });
+
+      setCorrectGuessers(newCorrectGuessers);
+      setStillGuessing(newStillGuessing);
+
+      // If the round start timestamp hasn't been set (e.g. when joining a game in progress)
+      // Set it now to avoid processing old messages
+      if (!currentRoundStartedAt) {
+        setCurrentRoundStartedAt(new Date().toISOString());
+        console.log("Round timestamp reset in initialization");
+      }
+
+      console.log("Round started - Tracking initialized:", {
+        roundStartedAt: currentRoundStartedAt,
+        drawer: currentDrawer,
+        correctGuessers: Array.from(newCorrectGuessers),
+        stillGuessing: Array.from(newStillGuessing),
+        totalPlayers: players.length,
+      });
+    }
+  }, [gameStatus, currentDrawer, players, currentRoundStartedAt]);
+
+  // Reset round timestamp when status changes from playing to choosing_word
+  useEffect(() => {
+    if (gameStatus === "choosing_word") {
+      setCurrentRoundStartedAt(null);
+      console.log("Round timestamp reset for word choosing phase");
+    }
+  }, [gameStatus]);
+
+  // Update player tracking when players join or leave
+  useEffect(() => {
+    if (gameStatus !== "playing") return;
+
+    // Get current player IDs
+    const currentPlayerIds = new Set(players.map((p) => p.user_id));
+
+    // For tracking changes
+    let stateChanged = false;
+    const updatedCorrectGuessers = new Set(correctGuessers);
+    const updatedStillGuessing = new Set(stillGuessing);
+
+    // Handle players who left (remove from tracking)
+    Array.from(updatedCorrectGuessers).forEach((id) => {
+      if (!currentPlayerIds.has(id)) {
+        updatedCorrectGuessers.delete(id);
+        console.log(`Player ${id} left and was removed from correctGuessers`);
+        stateChanged = true;
+      }
+    });
+
+    Array.from(updatedStillGuessing).forEach((id) => {
+      if (!currentPlayerIds.has(id)) {
+        updatedStillGuessing.delete(id);
+        console.log(`Player ${id} left and was removed from stillGuessing`);
+        stateChanged = true;
+      }
+    });
+
+    // Handle new players who joined during the game (add to stillGuessing)
+    players.forEach((player) => {
+      const id = player.user_id;
+      if (
+        id !== currentDrawer &&
+        !updatedCorrectGuessers.has(id) &&
+        !updatedStillGuessing.has(id)
+      ) {
+        updatedStillGuessing.add(id);
+        console.log(`New player ${id} joined and added to stillGuessing`);
+        stateChanged = true;
+      }
+    });
+
+    // Update state if needed
+    if (stateChanged) {
+      setCorrectGuessers(updatedCorrectGuessers);
+      setStillGuessing(updatedStillGuessing);
+
+      console.log("Player tracking updated after join/leave:", {
+        correctGuessers: Array.from(updatedCorrectGuessers),
+        stillGuessing: Array.from(updatedStillGuessing),
+        totalPlayers: players.length,
+      });
+    }
+  }, [players, gameStatus, currentDrawer]);
+
+  // End round when everyone has guessed correctly
+  useEffect(() => {
+    if (gameStatus !== "playing") return;
+
+    // If no one is still guessing, end the round
+    if (stillGuessing.size === 0 && correctGuessers.size > 1) {
+      // At least drawer + 1 guesser
+      console.log("Everyone guessed correctly - ending round", {
+        correctGuessers: Array.from(correctGuessers),
+        stillGuessing: Array.from(stillGuessing),
+      });
+      endRound();
+    }
+  }, [stillGuessing.size, correctGuessers.size, gameStatus]);
+
+  // Helper to leave game room and clean up player's entry
+  const leaveGame = async () => {
+    if (!gameId || !user?.id) {
+      navigate("/lobby");
+      return;
+    }
+    try {
+      await supabase
+        .from("game_players")
+        .delete()
+        .eq("game_id", gameId)
+        .eq("user_id", user.id);
+    } catch (err) {
+      console.error("Error leaving game:", err);
+    } finally {
+      navigate("/lobby");
+    }
   };
+
+  // End game automatically if player count drops below 2 after the game has started
+  useEffect(() => {
+    if (!gameId) return;
+    if (
+      players.length <= 1 &&
+      ["choosing_word", "playing"].includes(gameStatus)
+    ) {
+      (async () => {
+        try {
+          await supabase
+            .from("games")
+            .update({ status: "finished" })
+            .eq("id", gameId);
+          setGameStatus("finished");
+        } catch (err) {
+          console.error("Error auto-ending game:", err);
+        }
+      })();
+    }
+  }, [players.length, gameId]);
 
   if (loading) {
     return (
@@ -391,7 +731,7 @@ const GameRoom: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate("/lobby")}
+                onClick={leaveGame}
                 className="flex items-center space-x-2 text-gray-600 hover:text-gray-900"
               >
                 <ArrowLeft className="h-5 w-5" />
@@ -430,6 +770,9 @@ const GameRoom: React.FC = () => {
                     className={`flex items-center justify-between p-2 rounded ${
                       player.user_id === currentDrawer
                         ? "bg-blue-50 border border-blue-200"
+                        : gameStatus === "playing" &&
+                          correctGuessers.has(player.user_id)
+                        ? "bg-green-50 border border-green-200"
                         : "bg-gray-50"
                     }`}
                   >
@@ -441,6 +784,13 @@ const GameRoom: React.FC = () => {
                           Drawing
                         </span>
                       )}
+                      {gameStatus === "playing" &&
+                        player.user_id !== currentDrawer &&
+                        correctGuessers.has(player.user_id) && (
+                          <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                            Guessed
+                          </span>
+                        )}
                     </div>
                     <span className="text-sm font-semibold">
                       {player.score}
@@ -465,7 +815,7 @@ const GameRoom: React.FC = () => {
                     {players.length} player{players.length !== 1 ? "s" : ""}{" "}
                     joined
                   </p>
-                  {players.length >= 1 && (
+                  {players.length >= 2 && (
                     <button
                       onClick={startGame}
                       className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors animate-pulse"
@@ -473,14 +823,25 @@ const GameRoom: React.FC = () => {
                       Start Game (for testing)
                     </button>
                   )}
+                  {players.length < 2 && (
+                    <p className="text-gray-500 text-sm">
+                      Need at least 2 players to start
+                    </p>
+                  )}
                 </div>
               ) : gameStatus === "choosing_word" ? (
                 <div className="text-center py-12">
                   {user?.id === currentDrawer ? (
                     <div>
-                      <h3 className="text-xl font-semibold mb-4">
+                      <h3 className="text-xl font-semibold mb-2">
                         Choose a word
                       </h3>
+                      <p className="text-sm text-gray-600 mb-4">
+                        Time remaining:{" "}
+                        <span className="font-bold text-blue-600">
+                          {wordChoiceTimeLeft}s
+                        </span>
+                      </p>
                       <div className="space-x-4">
                         {wordChoices.map((word) => (
                           <button
@@ -494,9 +855,17 @@ const GameRoom: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <p className="text-gray-600">
-                      Waiting for the drawer to choose a word...
-                    </p>
+                    <div>
+                      <p className="text-gray-600 mb-2">
+                        Waiting for the drawer to choose a word...
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        Time remaining:{" "}
+                        <span className="font-semibold">
+                          {wordChoiceTimeLeft}s
+                        </span>
+                      </p>
+                    </div>
                   )}
                 </div>
               ) : gameStatus === "playing" ? (
@@ -507,6 +876,10 @@ const GameRoom: React.FC = () => {
                         <p className="text-center font-semibold text-blue-800">
                           You're drawing! Word:{" "}
                           <span className="text-lg">{currentWord}</span>
+                        </p>
+                        <p className="text-center text-sm text-blue-600 mt-1">
+                          {Array.from(correctGuessers).length - 1} of{" "}
+                          {players.length - 1} players have guessed correctly
                         </p>
                       </div>
                       <DrawingCanvas
@@ -530,6 +903,10 @@ const GameRoom: React.FC = () => {
                             .split("")
                             .map(() => "_")
                             .join(" ")}
+                        </p>
+                        <p className="text-sm text-gray-600 mt-1">
+                          {Array.from(correctGuessers).length - 1} of{" "}
+                          {players.length - 1} players have guessed correctly
                         </p>
                       </div>
                       <DrawingCanvas
