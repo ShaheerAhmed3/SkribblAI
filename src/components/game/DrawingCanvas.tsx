@@ -19,7 +19,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
   const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
-  const isFirstRun = useRef(true);
+  const prevDrawerIdRef = useRef<string | null>(null);
   const [selectedColor, setSelectedColor] = useState("#000000");
   const [brushSize, setBrushSize] = useState(5);
   const [currentTool, setCurrentTool] = useState<"brush" | "eraser" | "fill">(
@@ -265,18 +265,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     };
   }, [gameId]);
 
-  // Clear canvas when the drawer changes
-  useEffect(() => {
-    // A ref to skip the effect on the very first render.
-    if (isFirstRun.current) {
-      isFirstRun.current = false;
-      return;
-    }
-
-    // When the drawer changes, everyone should clear their local canvas.
-    // The new drawer is responsible for wiping the DB records.
-    clearCanvas();
-  }, [currentDrawerId]);
+  // Clear canvas only when the drawer really changes (skip null→id on first load)
 
   // Save path to database when drawn
   useEffect(() => {

@@ -16,11 +16,13 @@ export interface User {
 export interface Game {
   id: string;
   name: string;
-  status: "waiting" | "playing" | "finished";
+  status: "waiting" | "choosing_word" | "playing" | "finished";
   current_word?: string;
   current_drawer?: string;
   round: number;
   max_rounds: number;
+  round_started_at?: string;
+  word_choice_started_at?: string;
   created_at: string;
   updated_at: string;
 }
