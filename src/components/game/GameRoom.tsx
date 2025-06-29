@@ -1040,8 +1040,13 @@ const GameRoom: React.FC = () => {
                           <span className="text-lg">{currentWord}</span>
                         </p>
                         <p className="text-center text-sm text-blue-600 mt-1">
-                          {Array.from(correctGuessers).length - 1} of{" "}
-                          {players.length - 1} players have guessed correctly
+                          {Math.max(
+                            0,
+                            correctGuessers.has(currentDrawer ?? "")
+                              ? correctGuessers.size - 1
+                              : correctGuessers.size
+                          )}{" "}
+                          of {players.length - 1} players have guessed correctly
                         </p>
                       </div>
                       <DrawingCanvas
@@ -1069,8 +1074,13 @@ const GameRoom: React.FC = () => {
                                 .join(" ")}
                         </p>
                         <p className="text-sm text-gray-600 mt-1">
-                          {Array.from(correctGuessers).length - 1} of{" "}
-                          {players.length - 1} players have guessed correctly
+                          {Math.max(
+                            0,
+                            correctGuessers.has(currentDrawer ?? "")
+                              ? correctGuessers.size - 1
+                              : correctGuessers.size
+                          )}{" "}
+                          of {players.length - 1} players have guessed correctly
                         </p>
                       </div>
                       <DrawingCanvas
