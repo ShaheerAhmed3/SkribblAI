@@ -44,6 +44,9 @@ const GameRoom: React.FC = () => {
     string | null
   >(null);
 
+  // Track words that have been used so far in this game
+  const [usedWords, setUsedWords] = useState<Set<string>>(new Set());
+
   // Round-summary timer (5 s) and list of ordered correct guessers
   const [roundSummaryTimeLeft, setRoundSummaryTimeLeft] = useState(5);
   const [summaryPlayers, setSummaryPlayers] = useState<
@@ -54,7 +57,9 @@ const GameRoom: React.FC = () => {
 
   // Disable chat for the user who is currently drawing
   const isDrawer = user?.id === currentDrawer;
-  const chatDisabled = isDrawer && gameStatus === "playing";
+  const hasGuessedCorrectly = user?.id ? correctGuessers.has(user.id) : false;
+  const chatDisabled =
+    (isDrawer || hasGuessedCorrectly) && gameStatus === "playing";
 
   const fetchGameData = useCallback(async () => {
     if (!gameId) return;
@@ -71,6 +76,12 @@ const GameRoom: React.FC = () => {
       setGameStatus(gameData.status);
       setCurrentDrawer(gameData.current_drawer ?? null);
       setCurrentWord(gameData.current_word || "");
+      // Load previously used words from DB
+      if (gameData.used_words && Array.isArray(gameData.used_words)) {
+        setUsedWords(
+          new Set(gameData.used_words.map((w: string) => w.toLowerCase()))
+        );
+      }
 
       // Calculate remaining time if game is in progress
       if (gameData.status === "playing" && gameData.round_started_at) {
@@ -195,6 +206,13 @@ const GameRoom: React.FC = () => {
           setGameStatus(updatedGame.status);
           setCurrentDrawer(updatedGame.current_drawer ?? null);
           setCurrentWord(updatedGame.current_word || "");
+          if (updatedGame.used_words && Array.isArray(updatedGame.used_words)) {
+            setUsedWords(
+              new Set(
+                updatedGame.used_words.map((w: string) => w.toLowerCase())
+              )
+            );
+          }
 
           if (updatedGame.status === "playing") {
             if (updatedGame.round_started_at) {
@@ -425,6 +443,16 @@ const GameRoom: React.FC = () => {
     loadWordList().then(setWordList);
   }, []);
 
+  // Keep track of words that have been used so far
+  useEffect(() => {
+    if (gameStatus === "playing" && currentWord) {
+      setUsedWords((prev) => {
+        if (prev.has(currentWord.toLowerCase())) return prev;
+        return new Set([...prev, currentWord.toLowerCase()]);
+      });
+    }
+  }, [gameStatus, currentWord]);
+
   const startGame = async () => {
     if (players.length < 2) {
       toast.error("Need at least 2 players to start the game");
@@ -443,6 +471,7 @@ const GameRoom: React.FC = () => {
           current_drawer: randomPlayer.user_id,
           round: 1,
           word_choice_started_at: timestamp,
+          used_words: [],
         })
         .eq("id", gameId);
 
@@ -464,7 +493,7 @@ const GameRoom: React.FC = () => {
     } catch (clrErr) {
       console.error("Failed to clear drawing_strokes at end of round", clrErr);
     }
-
+    console.log(usedWords);
     try {
       const nextRound = (game?.round || 1) + 1;
       const isGameFinished = nextRound > (game?.max_rounds || 5);
@@ -552,15 +581,30 @@ const GameRoom: React.FC = () => {
       wordChoices.length === 0 &&
       wordList.length >= 3
     ) {
-      const shuffled = [...wordList].sort(() => 0.5 - Math.random());
-      setWordChoices(shuffled.slice(0, 3));
+      // Filter out words that have already been used in this game
+      const available = wordList.filter((w) => !usedWords.has(w.toLowerCase()));
+
+      // If fewer than 3 words remain, fall back to the full list (still without repeats)
+      const source = available.length >= 3 ? available : wordList;
+
+      const shuffled = [...source].sort(() => 0.5 - Math.random());
+      // Ensure we don't include any used words in the final selection
+      const choices = shuffled.filter((w) => !usedWords.has(w.toLowerCase()));
+      setWordChoices(choices.slice(0, 3));
     }
 
     // Clean up choices when not needed
     if (gameStatus !== "choosing_word" && wordChoices.length > 0) {
       setWordChoices([]);
     }
-  }, [gameStatus, currentDrawer, user, wordList, wordChoices.length]);
+  }, [
+    gameStatus,
+    currentDrawer,
+    user,
+    wordList,
+    wordChoices.length,
+    usedWords,
+  ]);
 
   const chooseWord = async (word: string) => {
     try {
@@ -573,6 +617,7 @@ const GameRoom: React.FC = () => {
           current_word: word,
           status: "playing",
           round_started_at: timestamp,
+          used_words: [...(game?.used_words || []), word],
         })
         .eq("id", gameId);
 
@@ -582,6 +627,8 @@ const GameRoom: React.FC = () => {
       setGameStatus("playing");
       setWordChoices([]);
       setTimeLeft(ROUND_DURATION);
+      // Mark this word as used locally
+      setUsedWords((prev) => new Set([...prev, word.toLowerCase()]));
 
       // Set the round start timestamp
       setCurrentRoundStartedAt(timestamp);
@@ -1185,7 +1232,13 @@ const GameRoom: React.FC = () => {
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-                    placeholder={chatDisabled ? "" : "Type your message..."}
+                    placeholder={
+                      chatDisabled
+                        ? isDrawer
+                          ? "You can't chat while drawing"
+                          : "You can't chat after guessing correctly"
+                        : "Type your message..."
+                    }
                     disabled={chatDisabled}
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />

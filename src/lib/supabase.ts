@@ -23,6 +23,7 @@ export interface Game {
   max_rounds: number;
   round_started_at?: string;
   word_choice_started_at?: string;
+  used_words?: string[];
   created_at: string;
   updated_at: string;
 }
