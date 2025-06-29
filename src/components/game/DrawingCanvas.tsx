@@ -337,6 +337,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           event: "canvas_clear",
           payload: { drawerId: user.id },
         });
+        console.log("canvas cleared sent");
         fetchAndRenderStrokes();
       } catch (error) {
         console.error("Error in clearCanvas DB operation:", error);
@@ -364,6 +365,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         event: "undo",
         payload: { drawerId: user.id },
       });
+      console.log("undo sent");
       // Locally reload strokes for immediate feedback
       await fetchAndRenderStrokes();
     } catch (err) {
@@ -453,6 +455,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         canvas.renderAll();
       })
       .on("broadcast", { event: "canvas_clear" }, ({ payload }) => {
+        console.log("canvas clear received");
         if (!fabricCanvasRef.current) return;
         if (payload.drawerId === user?.id) return; // ignore self
         const canvas = fabricCanvasRef.current;
@@ -464,6 +467,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         fetchAndRenderStrokes();
       })
       .on("broadcast", { event: "undo" }, ({ payload }) => {
+        console.log("undo received");
         if (!fabricCanvasRef.current) return;
         if (payload.drawerId === user?.id) return;
         fetchAndRenderStrokes();
