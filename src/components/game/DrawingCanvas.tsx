@@ -331,13 +331,13 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (user?.id === currentDrawerId) {
       try {
         await supabase.from("drawing_strokes").delete().eq("game_id", gameId);
-
-        // Broadcast refresh to all viewers so their canvases sync immediately
+        // In clearCanvas function, add broadcast to notify viewers
         liveChannelRef.current?.send({
           type: "broadcast",
-          event: "canvas_refresh",
-          payload: {},
+          event: "canvas_clear",
+          payload: { drawerId: user.id },
         });
+        fetchAndRenderStrokes();
       } catch (error) {
         console.error("Error in clearCanvas DB operation:", error);
       }
@@ -358,15 +358,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       if (error || !data) return;
       const lastId = data.id;
       await supabase.from("drawing_strokes").delete().eq("id", lastId);
-      // Locally reload strokes for immediate feedback
-      await fetchAndRenderStrokes();
-
-      // Notify other viewers to refresh their canvas
+      // Notify other clients to reload strokes
       liveChannelRef.current?.send({
         type: "broadcast",
-        event: "canvas_refresh",
-        payload: {},
+        event: "undo",
+        payload: { drawerId: user.id },
       });
+      // Locally reload strokes for immediate feedback
+      await fetchAndRenderStrokes();
     } catch (err) {
       console.error("Undo error", err);
     }
@@ -453,22 +452,20 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
         canvas.renderAll();
       })
-      .on("broadcast", { event: "canvas_refresh" }, () => {
+      .on("broadcast", { event: "canvas_clear" }, ({ payload }) => {
         if (!fabricCanvasRef.current) return;
+        if (payload.drawerId === user?.id) return; // ignore self
         const canvas = fabricCanvasRef.current;
-
-        // Clear local canvas state
         canvas.clear();
         canvas.backgroundColor = "white";
-
-        // Reset any in-flight remote stroke caches
-        remotePathMapRef.current = {};
-        Object.values(remoteLinesMapRef.current).forEach((objs) =>
-          objs.forEach((obj) => canvas.remove(obj))
-        );
+        canvas.renderAll();
         remoteLinesMapRef.current = {};
-
-        // Reload remaining persisted strokes
+        remotePathMapRef.current = {} as any;
+        fetchAndRenderStrokes();
+      })
+      .on("broadcast", { event: "undo" }, ({ payload }) => {
+        if (!fabricCanvasRef.current) return;
+        if (payload.drawerId === user?.id) return;
         fetchAndRenderStrokes();
       })
       .subscribe((status, err) => {
