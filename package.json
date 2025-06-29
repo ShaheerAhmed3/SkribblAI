@@ -4,7 +4,7 @@
   "description": "A real-time multiplayer drawing and guessing game",
   "private": true,
   "dependencies": {
-    "@supabase/supabase-js": "^2.38.4",
+    "@supabase/supabase-js": "^2.50.2",
     "@types/node": "^20.10.0",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
