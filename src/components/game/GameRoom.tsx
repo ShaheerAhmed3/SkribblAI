@@ -216,6 +216,7 @@ const GameRoom: React.FC = () => {
             }
           } else if (updatedGame.status === "choosing_word") {
             if (updatedGame.word_choice_started_at) {
+              console.log("word choice started at");
               // Calculate remaining time for word choice based on server timestamp
               const startTime = new Date(updatedGame.word_choice_started_at);
               const now = new Date();
@@ -271,11 +272,11 @@ const GameRoom: React.FC = () => {
         }
       )
       .subscribe((status, err) => {
-        // console.log("game room channel", status, err);
+        console.log("game room channel", status, err);
       });
 
     return () => {
-      //supabase.removeChannel(channel);
+      supabase.removeChannel(channel);
     };
   }, [gameId, user?.id, authLoading]); // include auth/loading so the effect runs once the session is available
 
