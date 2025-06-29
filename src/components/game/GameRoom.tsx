@@ -339,7 +339,7 @@ const GameRoom: React.FC = () => {
   // Auto transition out of round_summary when timer reaches 0 or already expired (handles page refresh)
   useEffect(() => {
     if (gameStatus !== "round_summary" || roundSummaryTimeLeft > 0) return;
-
+    console.log("round summary timer reached 0");
     // Only one client needs to perform the update; do it optimistically
     (async () => {
       try {
@@ -982,7 +982,7 @@ const GameRoom: React.FC = () => {
                       onClick={startGame}
                       className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors animate-pulse"
                     >
-                      Start Game (for testing)
+                      Start Game
                     </button>
                   )}
                   {players.length < 2 && (
