@@ -23,7 +23,7 @@ const GameRoom: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState(60);
   const [wordChoiceTimeLeft, setWordChoiceTimeLeft] = useState(10);
   const [gameStatus, setGameStatus] = useState<
-    "waiting" | "choosing_word" | "playing" | "finished"
+    "waiting" | "choosing_word" | "playing" | "round_summary" | "finished"
   >("waiting");
 
   // Word list & choices
@@ -41,7 +41,17 @@ const GameRoom: React.FC = () => {
     string | null
   >(null);
 
+  // Round-summary timer (5 s) and list of ordered correct guessers
+  const [roundSummaryTimeLeft, setRoundSummaryTimeLeft] = useState(5);
+  const [summaryPlayers, setSummaryPlayers] = useState<
+    { user_id: string; username: string; gained: number }[]
+  >([]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Disable chat for the user who is currently drawing
+  const isDrawer = user?.id === currentDrawer;
+  const chatDisabled = isDrawer && gameStatus === "playing";
 
   const fetchGameData = useCallback(async () => {
     if (!gameId) return;
@@ -102,6 +112,21 @@ const GameRoom: React.FC = () => {
       } else if (gameData.status !== "choosing_word") {
         // Reset word choice timer when not in choosing phase
         setWordChoiceTimeLeft(10);
+      }
+
+      // Calculate remaining time for round summary (5 seconds)
+      if (
+        (gameData.status as string) === "round_summary" &&
+        gameData.round_started_at
+      ) {
+        const startTime = new Date(gameData.round_started_at);
+        const now = new Date();
+        const elapsedSeconds = Math.floor(
+          (now.getTime() - startTime.getTime()) / 1000
+        );
+        const remainingTime = Math.max(0, 5 - elapsedSeconds);
+
+        setRoundSummaryTimeLeft(remainingTime);
       }
 
       // Fetch players
@@ -198,6 +223,19 @@ const GameRoom: React.FC = () => {
               // Fallback to 10 seconds if no timestamp available
               setWordChoiceTimeLeft(10);
             }
+          } else if ((updatedGame.status as string) === "round_summary") {
+            if (updatedGame.round_started_at) {
+              const startTime = new Date(updatedGame.round_started_at);
+              const now = new Date();
+              const elapsedSeconds = Math.floor(
+                (now.getTime() - startTime.getTime()) / 1000
+              );
+              const remainingTime = Math.max(0, 5 - elapsedSeconds);
+
+              setRoundSummaryTimeLeft(remainingTime);
+            } else {
+              setRoundSummaryTimeLeft(5);
+            }
           }
         }
       )
@@ -285,6 +323,67 @@ const GameRoom: React.FC = () => {
     }
   }, [gameStatus, wordChoiceTimeLeft, currentDrawer, user?.id, wordChoices]);
 
+  // Round summary timer (5 seconds)
+  useEffect(() => {
+    if (gameStatus === "round_summary" && roundSummaryTimeLeft > 0) {
+      const timer = setInterval(() => {
+        setRoundSummaryTimeLeft((prev) => (prev <= 1 ? 0 : prev - 1));
+      }, 1000);
+
+      return () => clearInterval(timer);
+    }
+  }, [gameStatus, roundSummaryTimeLeft]);
+
+  // Auto transition out of round_summary when timer reaches 0 or already expired (handles page refresh)
+  useEffect(() => {
+    if (gameStatus !== "round_summary" || roundSummaryTimeLeft > 0) return;
+
+    // Only one client needs to perform the update; do it optimistically
+    (async () => {
+      try {
+        const wordChoiceTimestamp = new Date().toISOString();
+        await supabase
+          .from("games")
+          .update({
+            status: "choosing_word",
+            round_started_at: null,
+            word_choice_started_at: wordChoiceTimestamp,
+          })
+          .eq("id", gameId);
+      } catch (err) {
+        console.error(
+          "Failed to transition from summary to choosing_word after refresh",
+          err
+        );
+      }
+    })();
+  }, [gameStatus, roundSummaryTimeLeft, gameId]);
+
+  // Build ordered list of players who guessed correctly at round end
+  useEffect(() => {
+    if (gameStatus !== "round_summary" || !currentRoundStartedAt) return;
+
+    const correctGuessMessages = messages
+      .filter(
+        (m) =>
+          m.is_correct &&
+          m.user_id &&
+          new Date(m.created_at) >= new Date(currentRoundStartedAt)
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+
+    const summary = correctGuessMessages.map((m) => ({
+      user_id: m.user_id!,
+      username: m.username,
+      gained: 10, // fixed per correct guess
+    }));
+
+    setSummaryPlayers(summary);
+  }, [gameStatus, messages, currentRoundStartedAt]);
+
   // Load words once on mount
   useEffect(() => {
     loadWordList().then(setWordList);
@@ -350,13 +449,10 @@ const GameRoom: React.FC = () => {
           (p) => p.user_id !== currentDrawer
         );
 
-        // If for some reason there are no remaining players (e.g., state not yet synced),
-        // fall back to using the full players array so we always have a drawer.
         if (remainingPlayers.length === 0) {
           remainingPlayers = [...players];
         }
 
-        // Still no players? Abort gracefully.
         if (remainingPlayers.length === 0) {
           console.warn("No available players to become the next drawer.");
           return;
@@ -365,23 +461,42 @@ const GameRoom: React.FC = () => {
         const nextDrawer =
           remainingPlayers[Math.floor(Math.random() * remainingPlayers.length)];
 
-        const timestamp = new Date().toISOString();
+        const summaryTimestamp = new Date().toISOString();
 
+        // 1) Switch to round_summary phase so every client can display the board
         await supabase
           .from("games")
           .update({
             round: nextRound,
             current_word: "",
             current_drawer: nextDrawer.user_id,
-            status: "choosing_word",
-            round_started_at: null,
-            word_choice_started_at: timestamp,
+            status: "round_summary",
+            round_started_at: summaryTimestamp, // reuse column for summary start
+            word_choice_started_at: null,
           })
           .eq("id", gameId);
 
-        setCurrentWord("");
         setCurrentDrawer(nextDrawer.user_id);
-        setGameStatus("choosing_word");
+        setCurrentWord("");
+        setGameStatus("round_summary");
+        setRoundSummaryTimeLeft(5);
+
+        // After 5 seconds, transition to choosing_word (only by client that triggered)
+        setTimeout(async () => {
+          try {
+            const wordChoiceTimestamp = new Date().toISOString();
+            await supabase
+              .from("games")
+              .update({
+                status: "choosing_word",
+                round_started_at: null,
+                word_choice_started_at: wordChoiceTimestamp,
+              })
+              .eq("id", gameId);
+          } catch (err) {
+            console.error("Failed to move from summary to choosing_word", err);
+          }
+        }, 5000);
 
         // Reset guessing state for new round
         setCorrectGuessers(new Set());
@@ -442,6 +557,8 @@ const GameRoom: React.FC = () => {
   };
 
   const sendMessage = async () => {
+    // Prevent the drawer from sending chat messages during their turn
+    if (chatDisabled) return;
     if (!newMessage.trim()) return;
 
     try {
@@ -564,16 +681,7 @@ const GameRoom: React.FC = () => {
       // Set it now to avoid processing old messages
       if (!currentRoundStartedAt) {
         setCurrentRoundStartedAt(new Date().toISOString());
-        console.log("Round timestamp reset in initialization");
       }
-
-      console.log("Round started - Tracking initialized:", {
-        roundStartedAt: currentRoundStartedAt,
-        drawer: currentDrawer,
-        correctGuessers: Array.from(newCorrectGuessers),
-        stillGuessing: Array.from(newStillGuessing),
-        totalPlayers: players.length,
-      });
     }
   }, [gameStatus, currentDrawer, players, currentRoundStartedAt]);
 
@@ -680,7 +788,7 @@ const GameRoom: React.FC = () => {
     if (!gameId) return;
     if (
       players.length <= 1 &&
-      ["choosing_word", "playing"].includes(gameStatus)
+      ["choosing_word", "playing", "round_summary"].includes(gameStatus)
     ) {
       (async () => {
         try {
@@ -779,6 +887,11 @@ const GameRoom: React.FC = () => {
                     <div className="flex items-center space-x-2">
                       <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                       <span className="font-medium">{player.username}</span>
+                      {player.user_id === user?.id && (
+                        <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                          You
+                        </span>
+                      )}
                       {player.user_id === currentDrawer && (
                         <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
                           Drawing
@@ -899,10 +1012,12 @@ const GameRoom: React.FC = () => {
                         </p>
                         <p className="text-sm text-gray-600 mt-1">
                           Word:{" "}
-                          {currentWord
-                            .split("")
-                            .map(() => "_")
-                            .join(" ")}
+                          {correctGuessers.has(user?.id || "")
+                            ? currentWord
+                            : currentWord
+                                .split("")
+                                .map(() => "_")
+                                .join(" ")}
                         </p>
                         <p className="text-sm text-gray-600 mt-1">
                           {Array.from(correctGuessers).length - 1} of{" "}
@@ -916,6 +1031,29 @@ const GameRoom: React.FC = () => {
                       />
                     </div>
                   )}
+                </div>
+              ) : gameStatus === "round_summary" ? (
+                <div className="text-center py-12">
+                  <h3 className="text-xl font-semibold mb-2">Round Summary</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Next round starts in {roundSummaryTimeLeft}s
+                  </p>
+                  <div className="space-y-2">
+                    {summaryPlayers.map((player, index) => (
+                      <div
+                        key={player.user_id}
+                        className="flex items-center justify-between p-2 bg-gray-50 rounded"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <span className="font-semibold">#{index + 1}</span>
+                          <span>{player.username}</span>
+                        </div>
+                        <span className="font-semibold">
+                          {player.gained} points
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="text-center py-12">
@@ -988,12 +1126,18 @@ const GameRoom: React.FC = () => {
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-                    placeholder="Type your message..."
+                    placeholder={chatDisabled ? "" : "Type your message..."}
+                    disabled={chatDisabled}
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <button
                     onClick={sendMessage}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                    disabled={chatDisabled}
+                    className={`px-4 py-2 rounded-md transition-colors ${
+                      chatDisabled
+                        ? "bg-gray-300 cursor-not-allowed"
+                        : "bg-blue-600 text-white hover:bg-blue-700"
+                    }`}
                   >
                     <Send className="h-4 w-4" />
                   </button>

@@ -22,24 +22,17 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const prevDrawerIdRef = useRef<string | null>(null);
   const [selectedColor, setSelectedColor] = useState("#000000");
   const [brushSize, setBrushSize] = useState(5);
-  const [currentTool, setCurrentTool] = useState<"brush" | "eraser" | "fill">(
-    "brush"
-  );
+  const [currentTool, setCurrentTool] = useState<"brush" | "eraser">("brush");
   const [sizeDropdownOpen, setSizeDropdownOpen] = useState(false);
   const sizeDropdownRef = useRef<HTMLDivElement>(null);
   const prevCanvasWidthRef = useRef<number | null>(null);
-  const fillActionsRef = useRef<{ x: number; y: number; color: string }[]>([]);
-  /* Live-ink refs */
   const liveChannelRef = useRef<RealtimeChannel | null>(null);
   const currentPathIdRef = useRef<string | null>(null);
   const lastLiveSendRef = useRef<number>(0);
-  // Tracks last point for each live path
   const remotePathMapRef = useRef<
     Record<string, { lastX: number; lastY: number }>
   >({});
 
-  // Stores the Fabric line objects drawn for each live path so we can
-  // remove them once the real stroke arrives.
   const remoteLinesMapRef = useRef<Record<string, fabric.Object[]>>({});
 
   const palette = [
@@ -70,8 +63,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   ];
 
   const sizeOptions = [2, 4, 6, 10, 16, 24];
-
-  // Initialize Fabric canvas
   useEffect(() => {
     if (!canvasRef.current) {
       return;
@@ -82,7 +73,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       return;
     }
 
-    // Set initial canvas dimensions
     const width = container.clientWidth;
     const height = width * 0.75; // 4:3 aspect ratio
 
@@ -185,16 +175,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
+    // Skip deprecated fill strokes
     if (stroke.tool === "fill") {
-      const ctx = canvas.getContext();
-      if (ctx) {
-        floodFill(
-          ctx as unknown as CanvasRenderingContext2D,
-          0,
-          0,
-          stroke.color
-        );
-      }
       return;
     }
 
@@ -272,7 +254,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const canvas = fabricCanvasRef.current;
     if (!canvas || readOnly) return;
 
-    // Handle path created event
     const handlePathCreated = (opt: any) => {
       const path = opt.path;
       if (!path) return;
@@ -287,19 +268,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       // Save path to database
       savePath(pathData);
-
-      // Reapply local fills so they persist after canvas rerender
-      fillActionsRef.current.forEach((fill) => {
-        const ctx = canvas.getContext();
-        if (ctx) {
-          floodFill(
-            ctx as unknown as CanvasRenderingContext2D,
-            fill.x,
-            fill.y,
-            fill.color
-          );
-        }
-      });
     };
 
     // Add event listener
@@ -311,16 +279,12 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     };
   }, [readOnly, gameId]);
 
-  // Update brush properties or fill tool
+  // Update brush/eraser properties
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    if (currentTool === "fill") {
-      canvas.isDrawingMode = false;
-    } else {
-      canvas.isDrawingMode = !readOnly;
-    }
+    canvas.isDrawingMode = !readOnly;
 
     if (!canvas.freeDrawingBrush) return;
 
@@ -334,44 +298,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       brush.width = brushSize;
     }
   }, [selectedColor, brushSize, currentTool, readOnly]);
-
-  // Handle fill tool mouse down
-  useEffect(() => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    const handleMouseDown = (opt: any) => {
-      if (currentTool !== "fill") return;
-      const evt = opt.e as MouseEvent;
-      const pointer = canvas.getPointer(evt, false);
-      const x = Math.floor(pointer.x);
-      const y = Math.floor(pointer.y);
-
-      // Ensure pointer within canvas bounds
-      if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
-
-      const ctx = canvas.getContext();
-      if (!ctx) return;
-
-      floodFill(
-        ctx as unknown as CanvasRenderingContext2D,
-        x,
-        y,
-        selectedColor
-      );
-
-      // Store fill locally to reapply after future renders
-      fillActionsRef.current.push({ x, y, color: selectedColor });
-
-      // Save fill action to DB
-      saveFill(selectedColor);
-    };
-
-    canvas.on("mouse:down", handleMouseDown);
-    return () => {
-      canvas.off("mouse:down", handleMouseDown);
-    };
-  }, [currentTool, selectedColor]);
 
   // Save path to database
   const savePath = async (pathData: any) => {
@@ -463,101 +389,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [sizeDropdownOpen]);
-
-  // Utility: convert hex to rgba array
-  const hexToRgba = (hex: string) => {
-    let c = hex.replace("#", "");
-    if (c.length === 3) {
-      c = c
-        .split("")
-        .map((ch) => ch + ch)
-        .join("");
-    }
-    const num = parseInt(c, 16);
-    return [(num >> 16) & 255, (num >> 8) & 255, num & 255, 255];
-  };
-
-  // Flood fill implementation (4-way)
-  const floodFill = (
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    fillColor: string
-  ) => {
-    const { width, height } = ctx.canvas;
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const data = imgData.data;
-
-    const startPos = (y * width + x) * 4;
-    const targetColor = data.slice(startPos, startPos + 4);
-    const replacementColor = hexToRgba(fillColor);
-
-    // If target color same as replacement, exit
-    if (
-      targetColor[0] === replacementColor[0] &&
-      targetColor[1] === replacementColor[1] &&
-      targetColor[2] === replacementColor[2]
-    ) {
-      return;
-    }
-
-    const stack: [number, number][] = [[x, y]];
-    const matchColor = (index: number) =>
-      data[index] === targetColor[0] &&
-      data[index + 1] === targetColor[1] &&
-      data[index + 2] === targetColor[2];
-
-    const colorPixel = (index: number) => {
-      data[index] = replacementColor[0];
-      data[index + 1] = replacementColor[1];
-      data[index + 2] = replacementColor[2];
-    };
-
-    while (stack.length) {
-      const [nx, ny] = stack.pop()!;
-      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-      let idx = (ny * width + nx) * 4;
-      if (!matchColor(idx)) continue;
-      // Move west until edge or different color
-      let wx = nx;
-      while (wx >= 0 && matchColor((ny * width + wx) * 4)) {
-        wx--;
-      }
-      wx++;
-      let ex = nx;
-      while (ex < width && matchColor((ny * width + ex) * 4)) {
-        ex++;
-      }
-      // Fill between wx and ex
-      for (let px = wx; px < ex; px++) {
-        idx = (ny * width + px) * 4;
-        colorPixel(idx);
-        if (ny > 0 && matchColor(idx - width * 4)) stack.push([px, ny - 1]);
-        if (ny < height - 1 && matchColor(idx + width * 4))
-          stack.push([px, ny + 1]);
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
-  };
-
-  // Save fill action
-  const saveFill = async (color: string) => {
-    if (!user) return;
-    try {
-      const { error } = await supabase.from("drawing_strokes").insert([
-        {
-          game_id: gameId,
-          points: { type: "fill" },
-          color: color,
-          brush_size: 0,
-          tool: "fill",
-        },
-      ]);
-      if (error) throw error;
-    } catch (error) {
-      console.error("Error saving fill:", error);
-    }
-  };
 
   // ────────────────────────────────────────────
   // Live-ink channel setup (receive)
@@ -777,32 +608,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
                     <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"></path>
                     <path d="M22 21H7"></path>
                     <path d="m5 11 9 9"></path>
-                  </svg>
-                </button>
-                {/* Fill / Paint Bucket */}
-                <button
-                  onClick={() => setCurrentTool("fill")}
-                  className={`w-10 h-10 flex items-center justify-center rounded-md border-2 transition-transform ${
-                    currentTool === "fill"
-                      ? "border-blue-500 bg-blue-100"
-                      : "border-gray-400 hover:bg-gray-200"
-                  }`}
-                  title="Fill"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M19.4 15a1.65 1.65 0 0 1 0 2.33l-3.57 3.57a2 2 0 0 1-2.83 0l-8.49-8.49a2 2 0 0 1 0-2.83l3.58-3.57a1.65 1.65 0 0 1 2.32 0Z"></path>
-                    <path d="M14.12 5.88 16 4"></path>
-                    <path d="M5 20h.01"></path>
                   </svg>
                 </button>
                 {/* Size Dropdown Button */}
