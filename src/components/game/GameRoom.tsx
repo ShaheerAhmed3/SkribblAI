@@ -189,6 +189,7 @@ const GameRoom: React.FC = () => {
           filter: `id=eq.${gameId}`,
         },
         (payload) => {
+          console.log("update request received");
           const updatedGame = payload.new as Game;
           setGame(updatedGame);
           setGameStatus(updatedGame.status);
@@ -231,6 +232,7 @@ const GameRoom: React.FC = () => {
               setWordChoiceTimeLeft(10);
             }
           } else if ((updatedGame.status as string) === "round_summary") {
+            console.log("round summary started at");
             if (updatedGame.round_started_at) {
               const startTime = new Date(updatedGame.round_started_at);
               const now = new Date();
