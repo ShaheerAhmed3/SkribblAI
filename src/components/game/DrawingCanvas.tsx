@@ -264,7 +264,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       // Convert path to JSON
       const pathData = path.toJSON();
-      console.log("Path created:", pathData);
 
       // Save path to database
       savePath(pathData);
