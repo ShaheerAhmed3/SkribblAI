@@ -200,7 +200,7 @@ const GameRoom: React.FC = () => {
           filter: `id=eq.${gameId}`,
         },
         (payload) => {
-          console.log("update request received");
+          // update request received
           const updatedGame = payload.new as Game;
           setGame(updatedGame);
           setGameStatus(updatedGame.status);
@@ -235,7 +235,7 @@ const GameRoom: React.FC = () => {
             }
           } else if (updatedGame.status === "choosing_word") {
             if (updatedGame.word_choice_started_at) {
-              console.log("word choice started at");
+              // word choice started at
               // Calculate remaining time for word choice based on server timestamp
               const startTime = new Date(updatedGame.word_choice_started_at);
               const now = new Date();
@@ -250,7 +250,7 @@ const GameRoom: React.FC = () => {
               setWordChoiceTimeLeft(10);
             }
           } else if ((updatedGame.status as string) === "round_summary") {
-            console.log("round summary started at");
+            // round summary started at
             if (updatedGame.round_started_at) {
               const startTime = new Date(updatedGame.round_started_at);
               const now = new Date();
@@ -292,7 +292,7 @@ const GameRoom: React.FC = () => {
         }
       )
       .subscribe((status, err) => {
-        console.log("game room channel", status, err);
+        // console.debug("game room channel", status, err);
       });
 
     return () => {
@@ -357,7 +357,7 @@ const GameRoom: React.FC = () => {
   // Auto transition out of round_summary when timer reaches 0 or already expired (handles page refresh)
   useEffect(() => {
     if (gameStatus !== "round_summary" || roundSummaryTimeLeft > 0) return;
-    console.log("round summary timer reached 0");
+    // round summary timer reached 0
     // Only one client needs to perform the update; do it optimistically
     (async () => {
       try {
@@ -493,7 +493,6 @@ const GameRoom: React.FC = () => {
     } catch (clrErr) {
       console.error("Failed to clear drawing_strokes at end of round", clrErr);
     }
-    console.log(usedWords);
     try {
       const nextRound = (game?.round || 1) + 1;
       const isGameFinished = nextRound > (game?.max_rounds || 5);
