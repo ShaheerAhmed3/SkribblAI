@@ -13,6 +13,7 @@ const Register: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const { signUp } = useAuth();
 
+  //Attempt to register the user with the supplied email, password & username
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password || !username) return;
@@ -24,8 +25,7 @@ const Register: React.FC = () => {
     setLoading(true);
     try {
       await signUp(email, password, username);
-    } catch (error) {
-      console.error("Registration error:", error);
+    } catch {
     } finally {
       setLoading(false);
     }

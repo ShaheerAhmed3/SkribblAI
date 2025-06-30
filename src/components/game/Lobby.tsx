@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase, Game } from "../../lib/supabase";
-import { Plus, Users, Play, LogOut } from "lucide-react";
+import { Plus, Users, Play, LogOut, Brush } from "lucide-react";
 import toast from "react-hot-toast";
 
 const Lobby: React.FC = () => {
@@ -13,6 +13,7 @@ const Lobby: React.FC = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
+  //Fetch games from Supabase
   const fetchGames = useCallback(async () => {
     try {
       const { data, error } = await supabase
@@ -24,13 +25,13 @@ const Lobby: React.FC = () => {
       if (error) throw error;
       setGames(data || []);
     } catch (error) {
-      console.error("Error fetching games:", error);
       toast.error("Failed to load games");
     } finally {
       setLoading(false);
     }
   }, []);
 
+  //Fetch games on mount
   useEffect(() => {
     fetchGames();
 
@@ -43,13 +44,14 @@ const Lobby: React.FC = () => {
           fetchGames();
         }
       )
-      .subscribe((status, err) => console.log("lobby-channel", status, err));
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [fetchGames]);
 
+  //Create a new game
   const createGame = async () => {
     if (!gameName.trim()) return;
 
@@ -62,7 +64,7 @@ const Lobby: React.FC = () => {
             name: gameName,
             status: "waiting",
             round: 1,
-            max_rounds: 5,
+            max_rounds: 15,
             created_by: user?.id,
           },
         ])
@@ -74,7 +76,6 @@ const Lobby: React.FC = () => {
       toast.success("Game created successfully!");
       navigate(`/game/${data.id}`);
     } catch (error: any) {
-      console.error("Error creating game:", error);
       toast.error(error.message);
     } finally {
       setCreatingGame(false);
@@ -82,6 +83,7 @@ const Lobby: React.FC = () => {
     }
   };
 
+  //Join a game
   const joinGame = async (gameId: string) => {
     try {
       const { error } = await supabase.from("game_players").insert([
@@ -99,17 +101,15 @@ const Lobby: React.FC = () => {
       toast.success("Joined game successfully!");
       navigate(`/game/${gameId}`);
     } catch (error: any) {
-      console.error("Error joining game:", error);
       toast.error(error.message);
     }
   };
 
+  //Sign out
   const handleSignOut = async () => {
     try {
       await signOut();
-    } catch (error) {
-      console.error("Error signing out:", error);
-    }
+    } catch (error) {}
   };
 
   if (loading) {
@@ -124,19 +124,24 @@ const Lobby: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen bg-indigo-50 p-6">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h1 className="text-4xl font-bold text-gray-900">SkribblAI</h1>
-            <p className="text-gray-600">
+            <div className="flex items-center space-x-3">
+              <Brush className="h-10 w-10 text-indigo-600 rotate-12" />
+              <h1 className="text-5xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 animate-pulse-slow drop-shadow-sm">
+                SkribblAI
+              </h1>
+            </div>
+            <p className="text-gray-700">
               Welcome, {user?.user_metadata?.username || "Player"}!
             </p>
           </div>
           <button
             onClick={handleSignOut}
-            className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+            className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-md shadow-lg hover:from-red-600 hover:to-orange-600 transition-all duration-300"
           >
             <LogOut className="h-5 w-5" />
             <span>Sign Out</span>
@@ -144,20 +149,27 @@ const Lobby: React.FC = () => {
         </div>
 
         {/* Create Game Section */}
-        <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
-          <h2 className="text-2xl font-semibold mb-4">Create New Game</h2>
+        <div className="bg-white/70 backdrop-blur-md rounded-xl shadow-xl ring-1 ring-indigo-100 p-6 mb-8">
+          <h2 className="text-3xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
+            Create New Game
+          </h2>
           <div className="flex space-x-4">
             <input
               type="text"
               value={gameName}
               onChange={(e) => setGameName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !creatingGame && gameName.trim()) {
+                  createGame();
+                }
+              }}
               placeholder="Enter game name..."
               className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button
               onClick={createGame}
               disabled={creatingGame || !gameName.trim()}
-              className="flex items-center space-x-2 px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center space-x-2 px-6 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-md shadow-lg hover:from-indigo-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
             >
               <Plus className="h-5 w-5" />
               <span>{creatingGame ? "Creating..." : "Create Game"}</span>
@@ -166,8 +178,10 @@ const Lobby: React.FC = () => {
         </div>
 
         {/* Available Games */}
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h2 className="text-2xl font-semibold mb-6">Available Games</h2>
+        <div className="bg-white/70 backdrop-blur-md rounded-xl shadow-xl ring-1 ring-indigo-100 p-6">
+          <h2 className="text-3xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
+            Available Games
+          </h2>
           {games.length === 0 ? (
             <div className="text-center py-12">
               <Users className="h-16 w-16 text-gray-400 mx-auto mb-4" />
@@ -180,7 +194,7 @@ const Lobby: React.FC = () => {
               {games.map((game) => (
                 <div
                   key={game.id}
-                  className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                  className="border border-transparent bg-white/80 backdrop-blur-sm rounded-lg p-4 hover:shadow-xl hover:-translate-y-1 transform transition-all"
                 >
                   <h3 className="font-semibold text-lg mb-2">{game.name}</h3>
                   <p className="text-gray-600 text-sm mb-4">
@@ -188,7 +202,7 @@ const Lobby: React.FC = () => {
                   </p>
                   <button
                     onClick={() => joinGame(game.id)}
-                    className="flex items-center space-x-2 w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                    className="flex items-center space-x-2 w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-md shadow-md hover:from-purple-600 hover:to-indigo-700 transition-all duration-300"
                   >
                     <Play className="h-4 w-4" />
                     <span>Join Game</span>

@@ -7,8 +7,7 @@ import toast from "react-hot-toast";
 import DrawingCanvas from "./DrawingCanvas";
 import { loadWordList } from "../../lib/wordList";
 
-// ----- Game constants -----
-const ROUND_DURATION = 80; // seconds per drawing round
+const ROUND_DURATION = 80;
 
 const GameRoom: React.FC = () => {
   const { gameId } = useParams<{ gameId: string }>();
@@ -29,42 +28,38 @@ const GameRoom: React.FC = () => {
     "waiting" | "choosing_word" | "playing" | "round_summary" | "finished"
   >("waiting");
 
-  // Word list & choices
   const [wordList, setWordList] = useState<string[]>([]);
   const [wordChoices, setWordChoices] = useState<string[]>([]);
 
-  // Player tracking for the current round
   const [correctGuessers, setCorrectGuessers] = useState<Set<string>>(
     new Set()
   );
   const [stillGuessing, setStillGuessing] = useState<Set<string>>(new Set());
 
-  // Track when the current round started (timestamp)
   const [currentRoundStartedAt, setCurrentRoundStartedAt] = useState<
     string | null
   >(null);
 
-  // Track words that have been used so far in this game
   const [usedWords, setUsedWords] = useState<Set<string>>(new Set());
 
-  // Round-summary timer (5 s) and list of ordered correct guessers
   const [roundSummaryTimeLeft, setRoundSummaryTimeLeft] = useState(5);
   const [summaryPlayers, setSummaryPlayers] = useState<
     { user_id: string; username: string; gained: number }[]
   >([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Disable chat for the user who is currently drawing
   const isDrawer = user?.id === currentDrawer;
   const hasGuessedCorrectly = user?.id ? correctGuessers.has(user.id) : false;
   const chatDisabled =
     (isDrawer || hasGuessedCorrectly) && gameStatus === "playing";
 
+  //Fetches the latest game, player and message data from Supabase
+  //and synchronises the component state accordingly.
   const fetchGameData = useCallback(async () => {
     if (!gameId) return;
     try {
-      // Fetch game
       const { data: gameData, error: gameError } = await supabase
         .from("games")
         .select("*")
@@ -76,14 +71,12 @@ const GameRoom: React.FC = () => {
       setGameStatus(gameData.status);
       setCurrentDrawer(gameData.current_drawer ?? null);
       setCurrentWord(gameData.current_word || "");
-      // Load previously used words from DB
       if (gameData.used_words && Array.isArray(gameData.used_words)) {
         setUsedWords(
           new Set(gameData.used_words.map((w: string) => w.toLowerCase()))
         );
       }
 
-      // Calculate remaining time if game is in progress
       if (gameData.status === "playing" && gameData.round_started_at) {
         const startTime = new Date(gameData.round_started_at);
         const now = new Date();
@@ -95,13 +88,11 @@ const GameRoom: React.FC = () => {
         setTimeLeft(remainingTime);
         setCurrentRoundStartedAt(gameData.round_started_at);
 
-        // Auto-end round if timer already expired
         if (remainingTime <= 0) {
           endRound();
         }
       }
 
-      // Calculate remaining time for word choice
       if (
         gameData.status === "choosing_word" &&
         gameData.word_choice_started_at
@@ -112,10 +103,7 @@ const GameRoom: React.FC = () => {
           (now.getTime() - startTime.getTime()) / 1000
         );
         const remainingTime = Math.max(0, 10 - elapsedSeconds);
-
         setWordChoiceTimeLeft(remainingTime);
-
-        // Auto-select word if time expired and this client is the drawer
         if (
           remainingTime <= 0 &&
           user?.id === gameData.current_drawer &&
@@ -124,11 +112,9 @@ const GameRoom: React.FC = () => {
           chooseWord(wordChoices[0]);
         }
       } else if (gameData.status !== "choosing_word") {
-        // Reset word choice timer when not in choosing phase
         setWordChoiceTimeLeft(10);
       }
 
-      // Calculate remaining time for round summary (5 seconds)
       if (
         (gameData.status as string) === "round_summary" &&
         gameData.round_started_at
@@ -143,7 +129,6 @@ const GameRoom: React.FC = () => {
         setRoundSummaryTimeLeft(remainingTime);
       }
 
-      // Fetch players
       const { data: playersData, error: playersError } = await supabase
         .from("game_players")
         .select("*")
@@ -152,7 +137,6 @@ const GameRoom: React.FC = () => {
       if (playersError) throw playersError;
       setPlayers(playersData || []);
 
-      // Fetch messages
       const { data: messagesData, error: messagesError } = await supabase
         .from("chat_messages")
         .select("*")
@@ -162,10 +146,8 @@ const GameRoom: React.FC = () => {
       if (messagesError) throw messagesError;
       setMessages(messagesData || []);
 
-      // Check if user is in the game
       const isPlayerInGame = playersData?.some((p) => p.user_id === user?.id);
       if (!isPlayerInGame && gameData.status === "waiting") {
-        // joinGame logic is now inside fetchGameData to avoid dependency issues
         await supabase.from("game_players").insert([
           {
             game_id: gameId,
@@ -177,7 +159,6 @@ const GameRoom: React.FC = () => {
         ]);
       }
     } catch (error) {
-      console.error("Error fetching game data:", error);
       toast.error("Failed to load game");
     } finally {
       setLoading(false);
@@ -186,7 +167,6 @@ const GameRoom: React.FC = () => {
 
   // Subscribe to Realtime changes (only once per room)
   useEffect(() => {
-    // Wait until auth session is ready before opening the Realtime channel
     if (!gameId || authLoading || !user) return;
 
     const channel = supabase.channel(`game-room:${gameId}`);
@@ -200,7 +180,6 @@ const GameRoom: React.FC = () => {
           filter: `id=eq.${gameId}`,
         },
         (payload) => {
-          // update request received
           const updatedGame = payload.new as Game;
           setGame(updatedGame);
           setGameStatus(updatedGame.status);
@@ -216,7 +195,6 @@ const GameRoom: React.FC = () => {
 
           if (updatedGame.status === "playing") {
             if (updatedGame.round_started_at) {
-              // Calculate remaining time based on server timestamp
               const startTime = new Date(updatedGame.round_started_at);
               const now = new Date();
               const elapsedSeconds = Math.floor(
@@ -230,13 +208,10 @@ const GameRoom: React.FC = () => {
               setTimeLeft(remainingTime);
               setCurrentRoundStartedAt(updatedGame.round_started_at);
             } else {
-              // Fallback to ROUND_DURATION seconds if no timestamp available
               setTimeLeft(ROUND_DURATION);
             }
           } else if (updatedGame.status === "choosing_word") {
             if (updatedGame.word_choice_started_at) {
-              // word choice started at
-              // Calculate remaining time for word choice based on server timestamp
               const startTime = new Date(updatedGame.word_choice_started_at);
               const now = new Date();
               const elapsedSeconds = Math.floor(
@@ -246,11 +221,9 @@ const GameRoom: React.FC = () => {
 
               setWordChoiceTimeLeft(remainingTime);
             } else {
-              // Fallback to 10 seconds if no timestamp available
               setWordChoiceTimeLeft(10);
             }
           } else if ((updatedGame.status as string) === "round_summary") {
-            // round summary started at
             if (updatedGame.round_started_at) {
               const startTime = new Date(updatedGame.round_started_at);
               const now = new Date();
@@ -295,7 +268,6 @@ const GameRoom: React.FC = () => {
           });
         }
       )
-      // Listen for players leaving the game
       .on(
         "postgres_changes",
         {
@@ -309,7 +281,6 @@ const GameRoom: React.FC = () => {
           setPlayers((prev) => prev.filter((p) => p.user_id !== leftUserId));
         }
       )
-      // Keep scores / name edits in sync
       .on(
         "postgres_changes",
         {
@@ -322,21 +293,20 @@ const GameRoom: React.FC = () => {
           fetchGameData();
         }
       )
-      .subscribe((status, err) => {
-        // console.debug("game room channel", status, err);
-      });
+      .subscribe((status, err) => {});
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [gameId, user?.id, authLoading]); // include auth/loading so the effect runs once the session is available
+  }, [gameId, user?.id, authLoading]);
 
-  // Fetch initial & subsequent game data whenever the room or auth user changes
+  //Fetch game data on mount
   useEffect(() => {
     if (!gameId) return;
     fetchGameData();
   }, [gameId, user, fetchGameData]);
 
+  //Drawing round timer
   useEffect(() => {
     if (gameStatus === "playing" && timeLeft > 0) {
       const timer = setInterval(() => {
@@ -353,15 +323,13 @@ const GameRoom: React.FC = () => {
     }
   }, [gameStatus, timeLeft]);
 
-  // Word choice timer
+  //Word choice timer
   useEffect(() => {
     if (gameStatus === "choosing_word" && wordChoiceTimeLeft > 0) {
       const timer = setInterval(() => {
         setWordChoiceTimeLeft((prev) => {
           if (prev <= 1) {
-            // Auto-select a word if the drawer is the current user
             if (user?.id === currentDrawer && wordChoices.length > 0) {
-              // Choose the first word option
               chooseWord(wordChoices[0]);
             }
             return 0;
@@ -374,7 +342,7 @@ const GameRoom: React.FC = () => {
     }
   }, [gameStatus, wordChoiceTimeLeft, currentDrawer, user?.id, wordChoices]);
 
-  // Round summary timer (5 seconds)
+  //Round summary timer
   useEffect(() => {
     if (gameStatus === "round_summary" && roundSummaryTimeLeft > 0) {
       const timer = setInterval(() => {
@@ -385,11 +353,9 @@ const GameRoom: React.FC = () => {
     }
   }, [gameStatus, roundSummaryTimeLeft]);
 
-  // Auto transition out of round_summary when timer reaches 0 or already expired (handles page refresh)
+  //Auto transition out of round_summary when timer reaches 0 or already expired (handles page refresh)
   useEffect(() => {
     if (gameStatus !== "round_summary" || roundSummaryTimeLeft > 0) return;
-    // round summary timer reached 0
-    // Only one client needs to perform the update; do it optimistically
     (async () => {
       try {
         const wordChoiceTimestamp = new Date().toISOString();
@@ -401,20 +367,14 @@ const GameRoom: React.FC = () => {
             word_choice_started_at: wordChoiceTimestamp,
           })
           .eq("id", gameId);
-      } catch (err) {
-        console.error(
-          "Failed to transition from summary to choosing_word after refresh",
-          err
-        );
-      }
+      } catch {}
     })();
   }, [gameStatus, roundSummaryTimeLeft, gameId]);
 
-  // Build ordered list of players who guessed correctly at round end
+  //Build ordered list of players who guessed correctly at round end
   useEffect(() => {
     if (gameStatus !== "round_summary" || !currentRoundStartedAt) return;
 
-    // 1) Correct guessers in the order they guessed
     const correctGuessMessages = messages
       .filter(
         (m) =>
@@ -451,7 +411,6 @@ const GameRoom: React.FC = () => {
       };
     });
 
-    // 2) Add players who didn't guess (0 points), excluding the drawer
     players.forEach((player) => {
       if (
         player.user_id === currentDrawer ||
@@ -469,12 +428,12 @@ const GameRoom: React.FC = () => {
     setSummaryPlayers(orderedSummary);
   }, [gameStatus, messages, currentRoundStartedAt, players, currentDrawer]);
 
-  // Load words once on mount
+  //Load words once on mount
   useEffect(() => {
     loadWordList().then(setWordList);
   }, []);
 
-  // Keep track of words that have been used so far
+  //Mark this word as used locally
   useEffect(() => {
     if (gameStatus === "playing" && currentWord) {
       setUsedWords((prev) => {
@@ -484,6 +443,7 @@ const GameRoom: React.FC = () => {
     }
   }, [gameStatus, currentWord]);
 
+  //Transitions the game from the waiting lobby to the first word-selection phase.
   const startGame = async () => {
     if (players.length < 2) {
       toast.error("Need at least 2 players to start the game");
@@ -512,18 +472,16 @@ const GameRoom: React.FC = () => {
       setCurrentWord("");
       setCurrentDrawer(randomPlayer.user_id);
     } catch (error: any) {
-      console.error("Error starting game:", error);
       toast.error(error.message);
     }
   };
 
+  //Ends the current drawing round, shows the summary for 5 s and
+  //either starts the next word-choice phase or finishes the game.
   const endRound = async () => {
-    // Clear the canvas for ALL clients by removing the strokes from the DB first
     try {
       await supabase.from("drawing_strokes").delete().eq("game_id", gameId);
-    } catch (clrErr) {
-      console.error("Failed to clear drawing_strokes at end of round", clrErr);
-    }
+    } catch {}
     try {
       const nextRound = (game?.round || 1) + 1;
       const isGameFinished = nextRound > (game?.max_rounds || 5);
@@ -549,7 +507,6 @@ const GameRoom: React.FC = () => {
         }
 
         if (remainingPlayers.length === 0) {
-          console.warn("No available players to become the next drawer.");
           return;
         }
 
@@ -558,25 +515,20 @@ const GameRoom: React.FC = () => {
 
         const summaryTimestamp = new Date().toISOString();
 
-        // 1) Switch to round_summary phase so every client can display the board
         await supabase
           .from("games")
           .update({
             round: nextRound,
-            current_word: "",
             current_drawer: nextDrawer.user_id,
             status: "round_summary",
-            round_started_at: summaryTimestamp, // reuse column for summary start
+            round_started_at: summaryTimestamp,
             word_choice_started_at: null,
           })
           .eq("id", gameId);
 
         setCurrentDrawer(nextDrawer.user_id);
-        setCurrentWord("");
         setGameStatus("round_summary");
         setRoundSummaryTimeLeft(5);
-
-        // After 5 seconds, transition to choosing_word (only by client that triggered)
         setTimeout(async () => {
           try {
             const wordChoiceTimestamp = new Date().toISOString();
@@ -588,17 +540,13 @@ const GameRoom: React.FC = () => {
                 word_choice_started_at: wordChoiceTimestamp,
               })
               .eq("id", gameId);
-          } catch (err) {
-            console.error("Failed to move from summary to choosing_word", err);
-          }
+          } catch {}
         }, 5000);
 
-        // Reset guessing state for new round
         setCorrectGuessers(new Set());
         setStillGuessing(new Set());
       }
     } catch (error: any) {
-      console.error("Error ending round:", error);
       toast.error(error.message);
     }
   };
@@ -611,19 +559,12 @@ const GameRoom: React.FC = () => {
       wordChoices.length === 0 &&
       wordList.length >= 3
     ) {
-      // Filter out words that have already been used in this game
       const available = wordList.filter((w) => !usedWords.has(w.toLowerCase()));
-
-      // If fewer than 3 words remain, fall back to the full list (still without repeats)
       const source = available.length >= 3 ? available : wordList;
-
       const shuffled = [...source].sort(() => 0.5 - Math.random());
-      // Ensure we don't include any used words in the final selection
       const choices = shuffled.filter((w) => !usedWords.has(w.toLowerCase()));
       setWordChoices(choices.slice(0, 3));
     }
-
-    // Clean up choices when not needed
     if (gameStatus !== "choosing_word" && wordChoices.length > 0) {
       setWordChoices([]);
     }
@@ -636,9 +577,9 @@ const GameRoom: React.FC = () => {
     usedWords,
   ]);
 
+  //Drawer selects a word → updates DB, starts the playing phase & timer.
   const chooseWord = async (word: string) => {
     try {
-      // Create a timestamp for this round
       const timestamp = new Date().toISOString();
 
       const { error } = await supabase
@@ -657,20 +598,16 @@ const GameRoom: React.FC = () => {
       setGameStatus("playing");
       setWordChoices([]);
       setTimeLeft(ROUND_DURATION);
-      // Mark this word as used locally
       setUsedWords((prev) => new Set([...prev, word.toLowerCase()]));
 
-      // Set the round start timestamp
       setCurrentRoundStartedAt(timestamp);
-      // console.log(`New round started at ${timestamp}`);
     } catch (error) {
-      console.error("Error choosing word:", error);
       toast.error("Failed to choose word");
     }
   };
 
+  //Sends a chat message (or guess) to Supabase and awards points for correct guesses.
   const sendMessage = async () => {
-    // Prevent the drawer from sending chat messages during their turn
     if (chatDisabled) return;
     if (!newMessage.trim()) return;
 
@@ -680,7 +617,6 @@ const GameRoom: React.FC = () => {
         isGuess &&
         newMessage.toLowerCase().trim() === currentWord.toLowerCase();
 
-      // If the guess is correct, we replace the actual guess with a generic success message
       const messageText = isCorrect
         ? `${user?.user_metadata?.username || "Anonymous"} guessed the word!`
         : newMessage;
@@ -701,7 +637,6 @@ const GameRoom: React.FC = () => {
       if (isCorrect && user?.id) {
         toast.success("Correct guess!");
 
-        // Determine points based on elapsed time since round start
         let gained = 0;
         if (currentRoundStartedAt) {
           const elapsed = Math.floor(
@@ -716,7 +651,6 @@ const GameRoom: React.FC = () => {
           gained = 100;
         }
 
-        // Update player score with dynamic points
         await supabase
           .from("game_players")
           .update({
@@ -730,21 +664,18 @@ const GameRoom: React.FC = () => {
 
       setNewMessage("");
     } catch (error: any) {
-      console.error("Error sending message:", error);
       toast.error(error.message);
     }
   };
 
-  // Process correct guesses from messages for current round only
+  //Process correct guesses from messages for current round only
   useEffect(() => {
     if (gameStatus !== "playing" || !currentRoundStartedAt) return;
 
-    // Create sets to track current state
     const currentCorrectGuessers = new Set(correctGuessers);
     const currentStillGuessing = new Set(stillGuessing);
     let stateChanged = false;
 
-    // Find all correct guesses from the current round only
     const currentRoundMessages = messages.filter(
       (m) =>
         m.is_correct &&
@@ -752,29 +683,17 @@ const GameRoom: React.FC = () => {
         new Date(m.created_at) >= new Date(currentRoundStartedAt)
     );
 
-    // Process each correct guess from current round
     currentRoundMessages.forEach((message) => {
       if (message.user_id && currentStillGuessing.has(message.user_id)) {
-        // Move player from stillGuessing to correctGuessers
         currentStillGuessing.delete(message.user_id);
         currentCorrectGuessers.add(message.user_id);
         stateChanged = true;
-        // console.log(
-        //   `Player ${message.user_id} guessed correctly in current round`
-        // );
       }
     });
 
-    // Update state only if changed (avoid unnecessary re-renders)
     if (stateChanged) {
       setCorrectGuessers(currentCorrectGuessers);
       setStillGuessing(currentStillGuessing);
-
-      // console.log("Updated player tracking for current round:", {
-      //   roundStartedAt: currentRoundStartedAt,
-      //   correctGuessers: Array.from(currentCorrectGuessers),
-      //   stillGuessing: Array.from(currentStillGuessing),
-      // });
     }
   }, [
     messages,
@@ -789,11 +708,7 @@ const GameRoom: React.FC = () => {
     if (gameStatus === "playing" && currentDrawer) {
       const newCorrectGuessers = new Set<string>();
       const newStillGuessing = new Set<string>();
-
-      // Add the drawer to correct guessers (they already know the word)
       newCorrectGuessers.add(currentDrawer);
-
-      // Add all other players to still guessing
       players.forEach((player) => {
         if (player.user_id !== currentDrawer) {
           newStillGuessing.add(player.user_id);
@@ -802,9 +717,6 @@ const GameRoom: React.FC = () => {
 
       setCorrectGuessers(newCorrectGuessers);
       setStillGuessing(newStillGuessing);
-
-      // If the round start timestamp hasn't been set (e.g. when joining a game in progress)
-      // Set it now to avoid processing old messages
       if (!currentRoundStartedAt) {
         setCurrentRoundStartedAt(new Date().toISOString());
       }
@@ -815,40 +727,28 @@ const GameRoom: React.FC = () => {
   useEffect(() => {
     if (gameStatus === "choosing_word") {
       setCurrentRoundStartedAt(null);
-      // console.log("Round timestamp reset for word choosing phase");
     }
   }, [gameStatus]);
 
   // Update player tracking when players join or leave
   useEffect(() => {
     if (gameStatus !== "playing") return;
-
-    // Get current player IDs
     const currentPlayerIds = new Set(players.map((p) => p.user_id));
-
-    // For tracking changes
     let stateChanged = false;
     const updatedCorrectGuessers = new Set(correctGuessers);
     const updatedStillGuessing = new Set(stillGuessing);
-
-    // Handle players who left (remove from tracking)
     Array.from(updatedCorrectGuessers).forEach((id) => {
       if (!currentPlayerIds.has(id)) {
         updatedCorrectGuessers.delete(id);
-        // console.log(`Player ${id} left and was removed from correctGuessers`);
         stateChanged = true;
       }
     });
-
     Array.from(updatedStillGuessing).forEach((id) => {
       if (!currentPlayerIds.has(id)) {
         updatedStillGuessing.delete(id);
-        // console.log(`Player ${id} left and was removed from stillGuessing`);
         stateChanged = true;
       }
     });
-
-    // Handle new players who joined during the game (add to stillGuessing)
     players.forEach((player) => {
       const id = player.user_id;
       if (
@@ -857,40 +757,24 @@ const GameRoom: React.FC = () => {
         !updatedStillGuessing.has(id)
       ) {
         updatedStillGuessing.add(id);
-        // console.log(`New player ${id} joined and added to stillGuessing`);
         stateChanged = true;
       }
     });
-
-    // Update state if needed
     if (stateChanged) {
       setCorrectGuessers(updatedCorrectGuessers);
       setStillGuessing(updatedStillGuessing);
-
-      // console.log("Player tracking updated after join/leave:", {
-      //   correctGuessers: Array.from(updatedCorrectGuessers),
-      //   stillGuessing: Array.from(updatedStillGuessing),
-      //   totalPlayers: players.length,
-      // });
     }
   }, [players, gameStatus, currentDrawer]);
 
   // End round when everyone has guessed correctly
   useEffect(() => {
     if (gameStatus !== "playing") return;
-
-    // If no one is still guessing, end the round
     if (stillGuessing.size === 0 && correctGuessers.size > 1) {
-      // At least drawer + 1 guesser
-      // console.log("Everyone guessed correctly - ending round", {
-      //   correctGuessers: Array.from(correctGuessers),
-      //   stillGuessing: Array.from(stillGuessing),
-      // });
       endRound();
     }
   }, [stillGuessing.size, correctGuessers.size, gameStatus]);
 
-  // Helper to leave game room and clean up player's entry
+  //Removes the current user from the game and navigates back to the lobby.
   const leaveGame = async () => {
     if (!gameId || !user?.id) {
       navigate("/lobby");
@@ -902,8 +786,7 @@ const GameRoom: React.FC = () => {
         .delete()
         .eq("game_id", gameId)
         .eq("user_id", user.id);
-    } catch (err) {
-      console.error("Error leaving game:", err);
+    } catch {
     } finally {
       navigate("/lobby");
     }
@@ -923,12 +806,18 @@ const GameRoom: React.FC = () => {
             .update({ status: "finished" })
             .eq("id", gameId);
           setGameStatus("finished");
-        } catch (err) {
-          console.error("Error auto-ending game:", err);
-        }
+        } catch {}
       })();
     }
   }, [players, gameStatus, gameId]);
+
+  // Automatically scroll chat container, not whole page, to latest message
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [messages]);
 
   if (loading) {
     return (
@@ -958,15 +847,15 @@ const GameRoom: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-indigo-50">
       {/* Header */}
-      <div className="bg-white shadow-sm border-b">
+      <div className="bg-white shadow-md border-b">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <button
                 onClick={leaveGame}
-                className="flex items-center space-x-2 text-gray-600 hover:text-gray-900"
+                className="flex items-center space-x-2 text-indigo-600 hover:text-purple-700 transition-colors"
               >
                 <ArrowLeft className="h-5 w-5" />
                 <span>Back to Lobby</span>
@@ -981,7 +870,7 @@ const GameRoom: React.FC = () => {
             </div>
             {gameStatus === "playing" && (
               <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-extrabold text-indigo-600 animate-pulse-slow">
                   {timeLeft}s
                 </div>
                 <div className="text-sm text-gray-600">Time remaining</div>
@@ -992,7 +881,7 @@ const GameRoom: React.FC = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           {/* Players List */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg shadow-sm p-4">
@@ -1041,7 +930,7 @@ const GameRoom: React.FC = () => {
           </div>
 
           {/* Game Area */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-3">
             <div className="bg-white rounded-lg shadow-sm p-4">
               {gameStatus === "waiting" ? (
                 <div className="text-center py-12">
@@ -1057,7 +946,7 @@ const GameRoom: React.FC = () => {
                   {players.length >= 2 && (
                     <button
                       onClick={startGame}
-                      className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors animate-pulse"
+                      className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-md shadow-lg hover:from-indigo-600 hover:to-purple-700 transition-all duration-300 animate-pulse-slow"
                     >
                       Start Game
                     </button>
@@ -1171,6 +1060,10 @@ const GameRoom: React.FC = () => {
               ) : gameStatus === "round_summary" ? (
                 <div className="text-center py-12">
                   <h3 className="text-xl font-semibold mb-2">Round Summary</h3>
+                  <p className="text-lg font-medium text-gray-800 mb-2">
+                    Word was:{" "}
+                    <span className="font-semibold">{currentWord}</span>
+                  </p>
                   <p className="text-sm text-gray-600 mb-4">
                     Next round starts in {roundSummaryTimeLeft}s
                   </p>
@@ -1185,7 +1078,7 @@ const GameRoom: React.FC = () => {
                           <span>{player.username}</span>
                         </div>
                         <span className="font-semibold">
-                          {player.gained} points
+                          + {player.gained} points
                         </span>
                       </div>
                     ))}
@@ -1224,7 +1117,10 @@ const GameRoom: React.FC = () => {
                 <h3 className="font-semibold">Chat</h3>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              <div
+                ref={messagesContainerRef}
+                className="flex-1 overflow-y-auto p-4 space-y-2"
+              >
                 {messages.map((message) => (
                   <div
                     key={message.id}
@@ -1265,20 +1161,20 @@ const GameRoom: React.FC = () => {
                     placeholder={
                       chatDisabled
                         ? isDrawer
-                          ? "You can't chat while drawing"
-                          : "You can't chat after guessing correctly"
+                          ? ""
+                          : ""
                         : "Type your message..."
                     }
                     disabled={chatDisabled}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0"
                   />
                   <button
                     onClick={sendMessage}
                     disabled={chatDisabled}
-                    className={`px-4 py-2 rounded-md transition-colors ${
+                    className={`px-4 py-2 flex items-center justify-center rounded-md transition-all duration-300 shadow-md ${
                       chatDisabled
                         ? "bg-gray-300 cursor-not-allowed"
-                        : "bg-blue-600 text-white hover:bg-blue-700"
+                        : "bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:from-indigo-600 hover:to-purple-700"
                     }`}
                   >
                     <Send className="h-4 w-4" />
