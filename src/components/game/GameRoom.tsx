@@ -847,15 +847,15 @@ const GameRoom: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-indigo-50">
       {/* Header */}
-      <div className="bg-white shadow-sm border-b">
+      <div className="bg-white shadow-md border-b">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <button
                 onClick={leaveGame}
-                className="flex items-center space-x-2 text-gray-600 hover:text-gray-900"
+                className="flex items-center space-x-2 text-indigo-600 hover:text-purple-700 transition-colors"
               >
                 <ArrowLeft className="h-5 w-5" />
                 <span>Back to Lobby</span>
@@ -870,7 +870,7 @@ const GameRoom: React.FC = () => {
             </div>
             {gameStatus === "playing" && (
               <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-extrabold text-indigo-600 animate-pulse-slow">
                   {timeLeft}s
                 </div>
                 <div className="text-sm text-gray-600">Time remaining</div>
@@ -881,7 +881,7 @@ const GameRoom: React.FC = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           {/* Players List */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg shadow-sm p-4">
@@ -930,7 +930,7 @@ const GameRoom: React.FC = () => {
           </div>
 
           {/* Game Area */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-3">
             <div className="bg-white rounded-lg shadow-sm p-4">
               {gameStatus === "waiting" ? (
                 <div className="text-center py-12">
@@ -946,7 +946,7 @@ const GameRoom: React.FC = () => {
                   {players.length >= 2 && (
                     <button
                       onClick={startGame}
-                      className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors animate-pulse"
+                      className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-md shadow-lg hover:from-indigo-600 hover:to-purple-700 transition-all duration-300 animate-pulse-slow"
                     >
                       Start Game
                     </button>
@@ -1166,15 +1166,15 @@ const GameRoom: React.FC = () => {
                         : "Type your message..."
                     }
                     disabled={chatDisabled}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0"
                   />
                   <button
                     onClick={sendMessage}
                     disabled={chatDisabled}
-                    className={`px-4 py-2 rounded-md transition-colors ${
+                    className={`px-4 py-2 flex items-center justify-center rounded-md transition-all duration-300 shadow-md ${
                       chatDisabled
                         ? "bg-gray-300 cursor-not-allowed"
-                        : "bg-blue-600 text-white hover:bg-blue-700"
+                        : "bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:from-indigo-600 hover:to-purple-700"
                     }`}
                   >
                     <Send className="h-4 w-4" />

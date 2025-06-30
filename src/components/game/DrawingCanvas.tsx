@@ -74,7 +74,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
 
     const width = container.clientWidth;
-    const height = width * 0.75;
+    const height = width * 0.8;
 
     const canvas = new fabric.Canvas(canvasRef.current, {
       isDrawingMode: !readOnly,
@@ -105,7 +105,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       if (newWidth === prevWidth) return;
 
       const scale = newWidth / prevWidth;
-      const newHeight = newWidth * 0.75;
+      const newHeight = newWidth * 0.8;
 
       canvas.getObjects().forEach((obj: any) => {
         obj.scaleX *= scale;
@@ -485,7 +485,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
   return (
     <div>
-      <div className="canvas-container relative">
+      <div className="canvas-container relative rounded-lg overflow-hidden shadow-lg ring-2 ring-indigo-300">
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-75 rounded-lg z-10">
             <div className="text-gray-500">Loading canvas...</div>
