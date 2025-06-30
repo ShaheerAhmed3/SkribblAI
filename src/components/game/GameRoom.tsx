@@ -290,7 +290,7 @@ const GameRoom: React.FC = () => {
         (payload) => {
           const newPlayer = payload.new as GamePlayer;
           setPlayers((prev) => {
-            if (prev.some((p) => p.id === newPlayer.id)) return prev;
+            if (prev.some((p) => p.user_id === newPlayer.user_id)) return prev;
             return [...prev, newPlayer];
           });
         }
@@ -305,8 +305,8 @@ const GameRoom: React.FC = () => {
           filter: `game_id=eq.${gameId}`,
         },
         (payload) => {
-          const leftId = (payload.old as GamePlayer).id;
-          setPlayers((prev) => prev.filter((p) => p.id !== leftId));
+          const leftUserId = (payload.old as GamePlayer).user_id;
+          setPlayers((prev) => prev.filter((p) => p.user_id !== leftUserId));
         }
       )
       // Keep scores / name edits in sync
@@ -928,7 +928,7 @@ const GameRoom: React.FC = () => {
         }
       })();
     }
-  }, [players.length, gameStatus, gameId]);
+  }, [players, gameStatus, gameId]);
 
   if (loading) {
     return (
