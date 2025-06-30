@@ -13,6 +13,7 @@ const Lobby: React.FC = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
+  //Fetch games from Supabase
   const fetchGames = useCallback(async () => {
     try {
       const { data, error } = await supabase
@@ -24,13 +25,13 @@ const Lobby: React.FC = () => {
       if (error) throw error;
       setGames(data || []);
     } catch (error) {
-      console.error("Error fetching games:", error);
       toast.error("Failed to load games");
     } finally {
       setLoading(false);
     }
   }, []);
 
+  //Fetch games on mount
   useEffect(() => {
     fetchGames();
 
@@ -43,13 +44,14 @@ const Lobby: React.FC = () => {
           fetchGames();
         }
       )
-      .subscribe((status, err) => console.log("lobby-channel", status, err));
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [fetchGames]);
 
+  //Create a new game
   const createGame = async () => {
     if (!gameName.trim()) return;
 
@@ -74,7 +76,6 @@ const Lobby: React.FC = () => {
       toast.success("Game created successfully!");
       navigate(`/game/${data.id}`);
     } catch (error: any) {
-      console.error("Error creating game:", error);
       toast.error(error.message);
     } finally {
       setCreatingGame(false);
@@ -82,6 +83,7 @@ const Lobby: React.FC = () => {
     }
   };
 
+  //Join a game
   const joinGame = async (gameId: string) => {
     try {
       const { error } = await supabase.from("game_players").insert([
@@ -99,17 +101,15 @@ const Lobby: React.FC = () => {
       toast.success("Joined game successfully!");
       navigate(`/game/${gameId}`);
     } catch (error: any) {
-      console.error("Error joining game:", error);
       toast.error(error.message);
     }
   };
 
+  //Sign out
   const handleSignOut = async () => {
     try {
       await signOut();
-    } catch (error) {
-      console.error("Error signing out:", error);
-    }
+    } catch (error) {}
   };
 
   if (loading) {
@@ -151,6 +151,11 @@ const Lobby: React.FC = () => {
               type="text"
               value={gameName}
               onChange={(e) => setGameName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !creatingGame && gameName.trim()) {
+                  createGame();
+                }
+              }}
               placeholder="Enter game name..."
               className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />

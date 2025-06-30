@@ -10,6 +10,7 @@ const Login: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
 
+  //Attempt to authenticate the user with the supplied email & password
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
@@ -17,8 +18,7 @@ const Login: React.FC = () => {
     setLoading(true);
     try {
       await signIn(email, password);
-    } catch (error) {
-      console.error("Login error:", error);
+    } catch {
     } finally {
       setLoading(false);
     }

@@ -74,9 +74,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
 
     const width = container.clientWidth;
-    const height = width * 0.75; // 4:3 aspect ratio
+    const height = width * 0.75;
 
-    // Create Fabric canvas
     const canvas = new fabric.Canvas(canvasRef.current, {
       isDrawingMode: !readOnly,
       backgroundColor: "white",
@@ -86,23 +85,16 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       enableRetinaScaling: false,
     });
 
-    // Store canvas reference
     fabricCanvasRef.current = canvas;
-
-    // Store initial width for future scaling
     prevCanvasWidthRef.current = width;
-
-    // Set loading state to false
     setIsLoading(false);
 
-    // Set up brush
     const brush = new fabric.PencilBrush(canvas);
     brush.color = selectedColor;
     brush.width = brushSize;
     canvas.freeDrawingBrush = brush;
 
-    // Further disable object interaction/selection
-    // @ts-ignore - fabric Canvas has these props at runtime
+    // @ts-ignore
     canvas.interactive = false;
     canvas.skipTargetFind = true;
 
@@ -115,7 +107,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       const scale = newWidth / prevWidth;
       const newHeight = newWidth * 0.75;
 
-      // Scale all objects proportionally
       canvas.getObjects().forEach((obj: any) => {
         obj.scaleX *= scale;
         obj.scaleY *= scale;
@@ -123,21 +114,13 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         obj.top *= scale;
         obj.setCoords();
       });
-
-      // Update canvas dimensions
       canvas.setWidth(newWidth);
       canvas.setHeight(newHeight);
-
-      // Rerender canvas
       canvas.renderAll();
-
-      // Update stored width for next resize
       prevCanvasWidthRef.current = newWidth;
     };
 
     window.addEventListener("resize", handleResize);
-
-    // Clean up on unmount
     return () => {
       window.removeEventListener("resize", handleResize);
       canvas.dispose();
@@ -148,8 +131,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const fetchAndRenderStrokes = async () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-
-    // Clear existing objects
     canvas.clear();
     canvas.backgroundColor = "white";
 
@@ -175,11 +156,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    // Skip deprecated fill strokes
-    if (stroke.tool === "fill") {
-      return;
-    }
-
     const pathData = stroke.points;
     const path = await fabric.Path.fromObject(pathData);
     if (path) {
@@ -196,8 +172,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     if (!gameId || !canvas) return;
 
     fetchAndRenderStrokes();
-
-    // Subscribe to real-time drawing updates
     const subscription = supabase
       .channel(`drawing:${gameId}`)
       .on(
@@ -221,13 +195,11 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           filter: `game_id=eq.${gameId}`,
         },
         () => {
-          // Received a delete event, clear the local canvas
           const canvas = fabricCanvasRef.current;
           if (canvas) {
             canvas.clear();
             canvas.backgroundColor = "white";
             canvas.renderAll();
-            // After any delete (single undo or full clear) reload remaining strokes
             fetchAndRenderStrokes();
           }
         }
@@ -238,13 +210,10 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         }
       });
 
-    // Clean up subscription on unmount
     return () => {
       subscription.unsubscribe();
     };
   }, [gameId]);
-
-  // Clear canvas only when the drawer really changes (skip null→id on first load)
 
   // Save path to database when drawn
   useEffect(() => {
@@ -254,22 +223,12 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const handlePathCreated = (opt: any) => {
       const path = opt.path;
       if (!path) return;
-
-      // Make the path non-selectable and non-interactive
       path.selectable = false;
       path.evented = false;
-
-      // Convert path to JSON
       const pathData = path.toJSON();
-
-      // Save path to database
       savePath(pathData);
     };
-
-    // Add event listener
     canvas.on("path:created", handlePathCreated);
-
-    // Clean up event listener on unmount
     return () => {
       canvas.off("path:created", handlePathCreated);
     };
@@ -315,20 +274,17 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     }
   };
 
+  //Clear the canvas
   const clearCanvas = async () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    // Always clear the local canvas for immediate feedback
     canvas.clear();
     canvas.backgroundColor = "white";
     canvas.renderAll();
-
-    // Only the current drawer has permission to delete from the DB
     if (user?.id === currentDrawerId) {
       try {
         await supabase.from("drawing_strokes").delete().eq("game_id", gameId);
-        // In clearCanvas function, add broadcast to notify viewers
         liveChannelRef.current?.send({
           type: "broadcast",
           event: "canvas_clear",
@@ -342,8 +298,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   };
 
   const undoLastStroke = async () => {
-    if (user?.id !== currentDrawerId) return; // only current drawer can undo
-
+    if (user?.id !== currentDrawerId) return;
     try {
       const { data, error } = await supabase
         .from("drawing_strokes")
@@ -355,13 +310,11 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       if (error || !data) return;
       const lastId = data.id;
       await supabase.from("drawing_strokes").delete().eq("id", lastId);
-      // Notify other clients to reload strokes
       liveChannelRef.current?.send({
         type: "broadcast",
         event: "undo",
         payload: { drawerId: user.id },
       });
-      // Locally reload strokes for immediate feedback
       await fetchAndRenderStrokes();
     } catch (err) {
       console.error("Undo error", err);
@@ -399,9 +352,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     };
   }, [sizeDropdownOpen]);
 
-  // ────────────────────────────────────────────
-  // Live-ink channel setup (receive)
-  // ────────────────────────────────────────────
+  //Live-ink channel setup (receive)
   useEffect(() => {
     if (!gameId) return;
 
@@ -409,7 +360,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       .channel(`drawing_live:${gameId}`)
       .on("broadcast", { event: "draw" }, ({ payload }) => {
         if (!fabricCanvasRef.current) return;
-        if (payload.drawerId === user?.id) return; // ignore ourselves
+        if (payload.drawerId === user?.id) return;
 
         const { pathId, x, y, color, width } = payload;
         const canvas = fabricCanvasRef.current;
@@ -424,8 +375,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           });
           canvas.add(line);
           canvas.renderAll();
-
-          // Keep track of the temporary lines so we can delete them later
           if (!remoteLinesMapRef.current[pathId]) {
             remoteLinesMapRef.current[pathId] = [];
           }
@@ -451,7 +400,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       })
       .on("broadcast", { event: "canvas_clear" }, ({ payload }) => {
         if (!fabricCanvasRef.current) return;
-        if (payload.drawerId === user?.id) return; // ignore self
+        if (payload.drawerId === user?.id) return;
         const canvas = fabricCanvasRef.current;
         canvas.clear();
         canvas.backgroundColor = "white";
@@ -477,13 +426,11 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     };
   }, [gameId]);
 
-  // ────────────────────────────────────────────
-  // Broadcast pointer positions while drawing (drawer only)
-  // ────────────────────────────────────────────
+  //Broadcast pointer positions while drawing (drawer only)
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    if (user?.id !== currentDrawerId) return; // only drawer sends
+    if (user?.id !== currentDrawerId) return;
 
     const handleDownLive = () => {
       currentPathIdRef.current = crypto.randomUUID();
@@ -492,7 +439,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const handleMoveLive = (opt: any) => {
       if (!currentPathIdRef.current || !liveChannelRef.current) return;
       const now = Date.now();
-      if (now - lastLiveSendRef.current < 25) return; // throttle
+      if (now - lastLiveSendRef.current < 25) return;
       lastLiveSendRef.current = now;
 
       const pointer = canvas.getPointer(opt.e as MouseEvent, false);
@@ -515,9 +462,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         currentPathIdRef.current = null;
         return;
       }
-
-      // Notify viewers that this live stroke is finished so they can
-      // remove the temporary line segments.
       liveChannelRef.current.send({
         type: "broadcast",
         event: "draw_end",
@@ -529,11 +473,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       currentPathIdRef.current = null;
     };
-
     canvas.on("mouse:down", handleDownLive);
     canvas.on("mouse:move", handleMoveLive);
     canvas.on("mouse:up", handleUpLive);
-
     return () => {
       canvas.off("mouse:down", handleDownLive);
       canvas.off("mouse:move", handleMoveLive);
@@ -543,7 +485,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
   return (
     <div>
-      {/* Canvas with border */}
       <div className="canvas-container relative">
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-75 rounded-lg z-10">
