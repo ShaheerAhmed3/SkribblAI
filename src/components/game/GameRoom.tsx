@@ -282,13 +282,44 @@ const GameRoom: React.FC = () => {
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
+          schema: "public",
+          table: "game_players",
+          filter: `game_id=eq.${gameId}`,
+        },
+        (payload) => {
+          const newPlayer = payload.new as GamePlayer;
+          setPlayers((prev) => {
+            if (prev.some((p) => p.id === newPlayer.id)) return prev;
+            return [...prev, newPlayer];
+          });
+        }
+      )
+      // Listen for players leaving the game
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "game_players",
+          filter: `game_id=eq.${gameId}`,
+        },
+        (payload) => {
+          const leftId = (payload.old as GamePlayer).id;
+          setPlayers((prev) => prev.filter((p) => p.id !== leftId));
+        }
+      )
+      // Keep scores / name edits in sync
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
           schema: "public",
           table: "game_players",
           filter: `game_id=eq.${gameId}`,
         },
         () => {
-          fetchGameData(); // Re-fetch all players and game data on change
+          fetchGameData();
         }
       )
       .subscribe((status, err) => {
@@ -897,7 +928,7 @@ const GameRoom: React.FC = () => {
         }
       })();
     }
-  }, [players.length, gameId]);
+  }, [players.length, gameStatus, gameId]);
 
   if (loading) {
     return (
