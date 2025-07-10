@@ -216,17 +216,25 @@ const GameRoom: React.FC = () => {
       if (messagesError) throw messagesError;
       setMessages(messagesData || []);
 
+      // Allow players to rejoin during any game state (not just "waiting")
       const isPlayerInGame = playersData?.some((p) => p.user_id === user?.id);
-      if (!isPlayerInGame && gameData.status === "waiting") {
-        await supabase.from("game_players").insert([
+      if (!isPlayerInGame && gameData.status !== "finished") {
+        // Try to restore the player using upsert to handle potential race conditions
+        await supabase.from("game_players").upsert(
+          [
+            {
+              game_id: gameId,
+              user_id: user?.id,
+              username: user?.user_metadata?.username || "Anonymous",
+              score: 0, // Will be preserved if player already exists
+              is_drawing: false,
+            },
+          ],
           {
-            game_id: gameId,
-            user_id: user?.id,
-            username: user?.user_metadata?.username || "Anonymous",
-            score: 0,
-            is_drawing: false,
-          },
-        ]);
+            onConflict: "game_id,user_id",
+            ignoreDuplicates: true,
+          }
+        );
       }
     } catch (error) {
       toast.error("Failed to load game");
@@ -859,6 +867,7 @@ const GameRoom: React.FC = () => {
   };
 
   // End game automatically if player count drops below 2 after the game has started
+  // Use a delay to prevent premature ending due to temporary disconnections (like refreshes)
   useEffect(() => {
     if (!gameId) return;
     if (loading) return; // Wait until initial data is fully loaded
@@ -866,15 +875,29 @@ const GameRoom: React.FC = () => {
       players.length <= 1 &&
       ["choosing_word", "playing", "round_summary"].includes(gameStatus)
     ) {
-      (async () => {
+      // Add a 3-second delay to handle temporary disconnections/refreshes
+      const timeoutId = setTimeout(async () => {
+        // Double-check the player count after the delay
         try {
-          await supabase
-            .from("games")
-            .update({ status: "finished" })
-            .eq("id", gameId);
-          setGameStatus("finished");
-        } catch {}
-      })();
+          const { data: currentPlayersData } = await supabase
+            .from("game_players")
+            .select("*")
+            .eq("game_id", gameId);
+
+          // Only end the game if player count is still low after the delay
+          if (currentPlayersData && currentPlayersData.length <= 1) {
+            await supabase
+              .from("games")
+              .update({ status: "finished" })
+              .eq("id", gameId);
+            setGameStatus("finished");
+          }
+        } catch (error) {
+          console.error("Error checking player count:", error);
+        }
+      }, 3000); // 3-second delay
+
+      return () => clearTimeout(timeoutId);
     }
   }, [players, gameStatus, gameId, loading]);
 
