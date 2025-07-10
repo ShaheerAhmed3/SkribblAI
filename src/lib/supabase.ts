@@ -21,6 +21,9 @@ export interface Game {
   current_drawer?: string;
   round: number;
   max_rounds: number;
+  round_duration: number; // Duration in seconds for each round
+  max_players: number; // Maximum number of players allowed in the game
+  showdowns: number; // Number of showdowns (each showdown = all players get 1 turn)
   round_started_at?: string;
   word_choice_started_at?: string;
   used_words?: string[];

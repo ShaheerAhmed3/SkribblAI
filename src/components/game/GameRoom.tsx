@@ -7,7 +7,18 @@ import toast from "react-hot-toast";
 import DrawingCanvas from "./DrawingCanvas";
 import { loadWordList } from "../../lib/wordList";
 
-const ROUND_DURATION = 80;
+// Utility function to calculate score based on dynamic quarter intervals
+const calculateScore = (
+  elapsedSeconds: number,
+  roundDuration: number
+): number => {
+  const quarterDuration = roundDuration / 4;
+
+  if (elapsedSeconds <= quarterDuration) return 400; // First quarter
+  if (elapsedSeconds <= quarterDuration * 2) return 300; // Second quarter
+  if (elapsedSeconds <= quarterDuration * 3) return 200; // Third quarter
+  return 100; // Fourth quarter
+};
 
 const GameRoom: React.FC = () => {
   const { gameId } = useParams<{ gameId: string }>();
@@ -22,7 +33,7 @@ const GameRoom: React.FC = () => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentDrawer, setCurrentDrawer] = useState<string | null>(null);
   const [currentWord, setCurrentWord] = useState<string>("");
-  const [timeLeft, setTimeLeft] = useState(ROUND_DURATION);
+  const [timeLeft, setTimeLeft] = useState(80); // Will be updated when game data loads
   const [wordChoiceTimeLeft, setWordChoiceTimeLeft] = useState(10);
   const [gameStatus, setGameStatus] = useState<
     "waiting" | "choosing_word" | "playing" | "round_summary" | "finished"
@@ -55,6 +66,62 @@ const GameRoom: React.FC = () => {
   const chatDisabled =
     (isDrawer || hasGuessedCorrectly) && gameStatus === "playing";
 
+  // Calculate current showdown based on round and player count
+  const getCurrentShowdown = useCallback(() => {
+    if (!game || !players.length) return { current: 1, total: 1 };
+
+    const playersInGame = players.length;
+    const currentRound = game.round;
+    const totalShowdowns = game.showdowns || 3;
+
+    // Calculate which showdown we're in (1-indexed)
+    const currentShowdown = Math.ceil(currentRound / playersInGame);
+
+    return {
+      current: Math.min(currentShowdown, totalShowdowns),
+      total: totalShowdowns,
+    };
+  }, [game, players]);
+
+  const currentShowdownInfo = getCurrentShowdown();
+
+  // Calculate round within current showdown for display
+  const getRoundInShowdown = useCallback(() => {
+    if (!game || !players.length) return { current: 1, total: 1 };
+
+    const playersInGame = players.length;
+    const currentRound = game.round;
+
+    // Calculate which round within the current showdown (1-indexed)
+    const roundInShowdown = ((currentRound - 1) % playersInGame) + 1;
+
+    return {
+      current: roundInShowdown,
+      total: playersInGame,
+    };
+  }, [game, players]);
+
+  const roundInShowdownInfo = getRoundInShowdown();
+
+  // Calculate next drawer in round-robin fashion for showdowns
+  const getNextDrawer = useCallback(() => {
+    if (!game || !players.length) return null;
+
+    // Sort players by join order for consistent round-robin
+    const sortedPlayers = [...players].sort(
+      (a, b) =>
+        new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime()
+    );
+
+    const nextRound = (game.round || 1) + 1;
+    const playersInGame = sortedPlayers.length;
+
+    // Calculate which player should draw next (0-indexed within the showdown)
+    const playerIndexInShowdown = (nextRound - 1) % playersInGame;
+
+    return sortedPlayers[playerIndexInShowdown];
+  }, [game, players]);
+
   //Fetches the latest game, player and message data from Supabase
   //and synchronises the component state accordingly.
   const fetchGameData = useCallback(async () => {
@@ -83,7 +150,10 @@ const GameRoom: React.FC = () => {
         const elapsedSeconds = Math.floor(
           (now.getTime() - startTime.getTime()) / 1000
         );
-        const remainingTime = Math.max(0, ROUND_DURATION - elapsedSeconds);
+        const remainingTime = Math.max(
+          0,
+          (gameData.round_duration || 80) - elapsedSeconds
+        );
 
         setTimeLeft(remainingTime);
         setCurrentRoundStartedAt(gameData.round_started_at);
@@ -202,13 +272,13 @@ const GameRoom: React.FC = () => {
               );
               const remainingTime = Math.max(
                 0,
-                ROUND_DURATION - elapsedSeconds
+                (updatedGame.round_duration || 80) - elapsedSeconds
               );
 
               setTimeLeft(remainingTime);
               setCurrentRoundStartedAt(updatedGame.round_started_at);
             } else {
-              setTimeLeft(ROUND_DURATION);
+              setTimeLeft(updatedGame.round_duration || 80);
             }
           } else if (updatedGame.status === "choosing_word") {
             if (updatedGame.word_choice_started_at) {
@@ -393,16 +463,13 @@ const GameRoom: React.FC = () => {
       gained: number;
     }[] = correctGuessMessages.map((m) => {
       let gained = 0;
-      if (currentRoundStartedAt) {
+      if (currentRoundStartedAt && game?.round_duration) {
         const elapsed = Math.floor(
           (new Date(m.created_at).getTime() -
             new Date(currentRoundStartedAt).getTime()) /
             1000
         );
-        if (elapsed <= 20) gained = 400;
-        else if (elapsed <= 40) gained = 300;
-        else if (elapsed <= 60) gained = 200;
-        else gained = 100;
+        gained = calculateScore(elapsed, game.round_duration);
       }
       return {
         user_id: m.user_id!,
@@ -451,16 +518,25 @@ const GameRoom: React.FC = () => {
     }
 
     try {
-      const randomPlayer = players[Math.floor(Math.random() * players.length)];
+      // Use first player in sorted order to start first showdown
+      const sortedPlayers = [...players].sort(
+        (a, b) =>
+          new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime()
+      );
+      const firstPlayer = sortedPlayers[0];
       const timestamp = new Date().toISOString();
+
+      // Calculate total rounds: showdowns × actual players in game
+      const totalRounds = (game?.showdowns || 3) * players.length;
 
       const { error } = await supabase
         .from("games")
         .update({
           status: "choosing_word",
           current_word: "",
-          current_drawer: randomPlayer.user_id,
+          current_drawer: firstPlayer.user_id,
           round: 1,
+          max_rounds: totalRounds, // Set based on actual players
           word_choice_started_at: timestamp,
           used_words: [],
         })
@@ -470,7 +546,7 @@ const GameRoom: React.FC = () => {
 
       setGameStatus("choosing_word");
       setCurrentWord("");
-      setCurrentDrawer(randomPlayer.user_id);
+      setCurrentDrawer(firstPlayer.user_id);
     } catch (error: any) {
       toast.error(error.message);
     }
@@ -484,7 +560,7 @@ const GameRoom: React.FC = () => {
     } catch {}
     try {
       const nextRound = (game?.round || 1) + 1;
-      const isGameFinished = nextRound > (game?.max_rounds || 5);
+      const isGameFinished = nextRound > (game?.max_rounds || 15);
 
       if (isGameFinished) {
         await supabase
@@ -498,20 +574,13 @@ const GameRoom: React.FC = () => {
         setGameStatus("finished");
         toast.success("Game finished!");
       } else {
-        let remainingPlayers = players.filter(
-          (p) => p.user_id !== currentDrawer
-        );
+        // Use round-robin selection for proper showdown progression
+        const nextDrawer = getNextDrawer();
 
-        if (remainingPlayers.length === 0) {
-          remainingPlayers = [...players];
-        }
-
-        if (remainingPlayers.length === 0) {
+        if (!nextDrawer) {
+          toast.error("Unable to determine next drawer");
           return;
         }
-
-        const nextDrawer =
-          remainingPlayers[Math.floor(Math.random() * remainingPlayers.length)];
 
         const summaryTimestamp = new Date().toISOString();
 
@@ -597,7 +666,7 @@ const GameRoom: React.FC = () => {
       setCurrentWord(word);
       setGameStatus("playing");
       setWordChoices([]);
-      setTimeLeft(ROUND_DURATION);
+      setTimeLeft(game?.round_duration || 80);
       setUsedWords((prev) => new Set([...prev, word.toLowerCase()]));
 
       setCurrentRoundStartedAt(timestamp);
@@ -638,15 +707,12 @@ const GameRoom: React.FC = () => {
         toast.success("Correct guess!");
 
         let gained = 0;
-        if (currentRoundStartedAt) {
+        if (currentRoundStartedAt && game?.round_duration) {
           const elapsed = Math.floor(
             (new Date().getTime() - new Date(currentRoundStartedAt).getTime()) /
               1000
           );
-          if (elapsed <= 20) gained = 400;
-          else if (elapsed <= 40) gained = 300;
-          else if (elapsed <= 60) gained = 200;
-          else gained = 100;
+          gained = calculateScore(elapsed, game.round_duration);
         } else {
           gained = 100;
         }
@@ -795,6 +861,7 @@ const GameRoom: React.FC = () => {
   // End game automatically if player count drops below 2 after the game has started
   useEffect(() => {
     if (!gameId) return;
+    if (loading) return; // Wait until initial data is fully loaded
     if (
       players.length <= 1 &&
       ["choosing_word", "playing", "round_summary"].includes(gameStatus)
@@ -809,7 +876,7 @@ const GameRoom: React.FC = () => {
         } catch {}
       })();
     }
-  }, [players, gameStatus, gameId]);
+  }, [players, gameStatus, gameId, loading]);
 
   // Automatically scroll chat container, not whole page, to latest message
   useEffect(() => {
@@ -863,8 +930,10 @@ const GameRoom: React.FC = () => {
               <div>
                 <h1 className="text-xl font-semibold">{game.name}</h1>
                 <p className="text-sm text-gray-600">
-                  Round {game.round}/{game.max_rounds} • {players.length}{" "}
-                  players
+                  Showdown {currentShowdownInfo.current}/
+                  {currentShowdownInfo.total} • Round{" "}
+                  {roundInShowdownInfo.current}/{roundInShowdownInfo.total} •{" "}
+                  {players.length} players
                 </p>
               </div>
             </div>
@@ -887,44 +956,55 @@ const GameRoom: React.FC = () => {
             <div className="bg-white rounded-lg shadow-sm p-4">
               <h3 className="font-semibold mb-4">Players</h3>
               <div className="space-y-2">
-                {players.map((player) => (
-                  <div
-                    key={player.id}
-                    className={`flex items-center justify-between p-2 rounded ${
-                      player.user_id === currentDrawer
-                        ? "bg-blue-50 border border-blue-200"
-                        : gameStatus === "playing" &&
-                          correctGuessers.has(player.user_id)
-                        ? "bg-green-50 border border-green-200"
-                        : "bg-gray-50"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                      <span className="font-medium">{player.username}</span>
-                      {player.user_id === user?.id && (
-                        <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
-                          You
-                        </span>
-                      )}
-                      {player.user_id === currentDrawer && (
-                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                          Drawing
-                        </span>
-                      )}
-                      {gameStatus === "playing" &&
-                        player.user_id !== currentDrawer &&
-                        correctGuessers.has(player.user_id) && (
-                          <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                            Guessed
+                {[...players]
+                  .sort((a, b) => {
+                    // Sort by score (highest first), then by join time (earliest first) for stable ordering
+                    if (a.score !== b.score) {
+                      return b.score - a.score; // Higher score first
+                    }
+                    return (
+                      new Date(a.joined_at).getTime() -
+                      new Date(b.joined_at).getTime()
+                    ); // Earlier join time first
+                  })
+                  .map((player) => (
+                    <div
+                      key={player.id}
+                      className={`flex items-center justify-between p-2 rounded ${
+                        player.user_id === currentDrawer
+                          ? "bg-blue-50 border border-blue-200"
+                          : gameStatus === "playing" &&
+                            correctGuessers.has(player.user_id)
+                          ? "bg-green-50 border border-green-200"
+                          : "bg-gray-50"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                        <span className="font-medium">{player.username}</span>
+                        {player.user_id === user?.id && (
+                          <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                            You
                           </span>
                         )}
+                        {player.user_id === currentDrawer && (
+                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                            Drawing
+                          </span>
+                        )}
+                        {gameStatus === "playing" &&
+                          player.user_id !== currentDrawer &&
+                          correctGuessers.has(player.user_id) && (
+                            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                              Guessed
+                            </span>
+                          )}
+                      </div>
+                      <span className="text-sm font-semibold">
+                        {player.score}
+                      </span>
                     </div>
-                    <span className="text-sm font-semibold">
-                      {player.score}
-                    </span>
-                  </div>
-                ))}
+                  ))}
               </div>
             </div>
           </div>
@@ -940,8 +1020,8 @@ const GameRoom: React.FC = () => {
                       : "Waiting for players..."}
                   </h3>
                   <p className="text-gray-600 mb-6">
-                    {players.length} player{players.length !== 1 ? "s" : ""}{" "}
-                    joined
+                    {players.length}/{game?.max_players || 6} player
+                    {players.length !== 1 ? "s" : ""} joined
                   </p>
                   {players.length >= 2 && (
                     <button
