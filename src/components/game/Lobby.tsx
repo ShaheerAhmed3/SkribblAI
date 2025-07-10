@@ -10,6 +10,9 @@ const Lobby: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [creatingGame, setCreatingGame] = useState(false);
   const [gameName, setGameName] = useState("");
+  const [roundDuration, setRoundDuration] = useState(60); // Default to 60 seconds
+  const [maxPlayers, setMaxPlayers] = useState(6); // Default to 6 players
+  const [showdowns, setShowdowns] = useState(3); // Default to 3 showdowns
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
@@ -18,7 +21,12 @@ const Lobby: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from("games")
-        .select("*")
+        .select(
+          `
+          *,
+          game_players(count)
+        `
+        )
         .eq("status", "waiting")
         .order("created_at", { ascending: false });
 
@@ -57,6 +65,7 @@ const Lobby: React.FC = () => {
 
     setCreatingGame(true);
     try {
+      // max_rounds will be calculated when the game starts based on actual players
       const { data, error } = await supabase
         .from("games")
         .insert([
@@ -64,7 +73,10 @@ const Lobby: React.FC = () => {
             name: gameName,
             status: "waiting",
             round: 1,
-            max_rounds: 15,
+            max_rounds: 1, // Placeholder, will be updated when game starts
+            round_duration: roundDuration,
+            max_players: maxPlayers,
+            showdowns: showdowns,
             created_by: user?.id,
           },
         ])
@@ -80,12 +92,61 @@ const Lobby: React.FC = () => {
     } finally {
       setCreatingGame(false);
       setGameName("");
+      setRoundDuration(60); // Reset to default
+      setMaxPlayers(6); // Reset to default
+      setShowdowns(3); // Reset to default
     }
   };
 
   //Join a game
   const joinGame = async (gameId: string) => {
     try {
+      // First, get the game details and current player count
+      const { data: gameData, error: gameError } = await supabase
+        .from("games")
+        .select("max_players")
+        .eq("id", gameId)
+        .single();
+
+      if (gameError) throw gameError;
+
+      const { count: currentPlayerCount, error: countError } = await supabase
+        .from("game_players")
+        .select("*", { count: "exact", head: true })
+        .eq("game_id", gameId);
+
+      if (countError) throw countError;
+
+      // Check if game is at max capacity
+      if (
+        currentPlayerCount !== null &&
+        currentPlayerCount >= gameData.max_players
+      ) {
+        toast.error(
+          `Game is full! Maximum ${gameData.max_players} players allowed.`
+        );
+        return;
+      }
+
+      // Check if user is already in the game
+      const { data: existingPlayer, error: playerCheckError } = await supabase
+        .from("game_players")
+        .select("id")
+        .eq("game_id", gameId)
+        .eq("user_id", user?.id)
+        .single();
+
+      if (playerCheckError && playerCheckError.code !== "PGRST116") {
+        throw playerCheckError;
+      }
+
+      if (existingPlayer) {
+        // User is already in the game, just navigate
+        navigate(`/game/${gameId}`);
+        return;
+      }
+
+      // Add the player to the game
       const { error } = await supabase.from("game_players").insert([
         {
           game_id: gameId,
@@ -101,7 +162,7 @@ const Lobby: React.FC = () => {
       toast.success("Joined game successfully!");
       navigate(`/game/${gameId}`);
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to join game");
     }
   };
 
@@ -153,7 +214,7 @@ const Lobby: React.FC = () => {
           <h2 className="text-3xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
             Create New Game
           </h2>
-          <div className="flex space-x-4">
+          <div className="flex flex-col space-y-4 sm:flex-row sm:space-y-0 sm:space-x-4">
             <input
               type="text"
               value={gameName}
@@ -166,10 +227,61 @@ const Lobby: React.FC = () => {
               placeholder="Enter game name..."
               className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-700 mb-1">
+                Round Time
+              </label>
+              <select
+                value={roundDuration}
+                onChange={(e) => setRoundDuration(Number(e.target.value))}
+                className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value={40}>40 seconds</option>
+                <option value={50}>50 seconds</option>
+                <option value={60}>60 seconds</option>
+                <option value={70}>70 seconds</option>
+              </select>
+            </div>
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-700 mb-1">
+                Max Players
+              </label>
+              <select
+                value={maxPlayers}
+                onChange={(e) => setMaxPlayers(Number(e.target.value))}
+                className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value={2}>2 players</option>
+                <option value={3}>3 players</option>
+                <option value={4}>4 players</option>
+                <option value={5}>5 players</option>
+                <option value={6}>6 players</option>
+                <option value={7}>7 players</option>
+                <option value={8}>8 players</option>
+                <option value={9}>9 players</option>
+                <option value={10}>10 players</option>
+              </select>
+            </div>
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-700 mb-1">
+                Showdowns
+              </label>
+              <select
+                value={showdowns}
+                onChange={(e) => setShowdowns(Number(e.target.value))}
+                className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value={1}>1 showdown</option>
+                <option value={2}>2 showdowns</option>
+                <option value={3}>3 showdowns</option>
+                <option value={4}>4 showdowns</option>
+                <option value={5}>5 showdowns</option>
+              </select>
+            </div>
             <button
               onClick={createGame}
               disabled={creatingGame || !gameName.trim()}
-              className="flex items-center space-x-2 px-6 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-md shadow-lg hover:from-indigo-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
+              className="flex items-center justify-center space-x-2 px-6 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-md shadow-lg hover:from-indigo-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 whitespace-nowrap"
             >
               <Plus className="h-5 w-5" />
               <span>{creatingGame ? "Creating..." : "Create Game"}</span>
@@ -191,24 +303,49 @@ const Lobby: React.FC = () => {
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {games.map((game) => (
-                <div
-                  key={game.id}
-                  className="border border-transparent bg-white/80 backdrop-blur-sm rounded-lg p-4 hover:shadow-xl hover:-translate-y-1 transform transition-all"
-                >
-                  <h3 className="font-semibold text-lg mb-2">{game.name}</h3>
-                  <p className="text-gray-600 text-sm mb-4">
-                    Created {new Date(game.created_at).toLocaleDateString()}
-                  </p>
-                  <button
-                    onClick={() => joinGame(game.id)}
-                    className="flex items-center space-x-2 w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-md shadow-md hover:from-purple-600 hover:to-indigo-700 transition-all duration-300"
+              {games.map((game) => {
+                const currentPlayerCount =
+                  (game as any).game_players?.length || 0;
+                const maxPlayers = game.max_players || 6;
+                const isFull = currentPlayerCount >= maxPlayers;
+
+                return (
+                  <div
+                    key={game.id}
+                    className={`border border-transparent bg-white/80 backdrop-blur-sm rounded-lg p-4 hover:shadow-xl hover:-translate-y-1 transform transition-all ${
+                      isFull ? "opacity-60" : ""
+                    }`}
                   >
-                    <Play className="h-4 w-4" />
-                    <span>Join Game</span>
-                  </button>
-                </div>
-              ))}
+                    <h3 className="font-semibold text-lg mb-2">{game.name}</h3>
+                    <div className="space-y-1 mb-4">
+                      <p className="text-gray-600 text-sm">
+                        Created {new Date(game.created_at).toLocaleDateString()}
+                      </p>
+                      <p className="text-gray-600 text-sm">
+                        Players: {currentPlayerCount}/{maxPlayers}
+                      </p>
+                      <p className="text-gray-600 text-sm">
+                        Showdowns: {game.showdowns || 3}
+                      </p>
+                      <p className="text-gray-600 text-sm">
+                        Round Time: {game.round_duration || 80}s
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => joinGame(game.id)}
+                      disabled={isFull}
+                      className={`flex items-center space-x-2 w-full px-4 py-2 rounded-md shadow-md transition-all duration-300 ${
+                        isFull
+                          ? "bg-gray-400 text-gray-600 cursor-not-allowed"
+                          : "bg-gradient-to-r from-purple-500 to-indigo-600 text-white hover:from-purple-600 hover:to-indigo-700"
+                      }`}
+                    >
+                      <Play className="h-4 w-4" />
+                      <span>{isFull ? "Game Full" : "Join Game"}</span>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
