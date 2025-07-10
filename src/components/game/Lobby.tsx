@@ -185,14 +185,22 @@ const Lobby: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-indigo-50 p-6">
+    <div
+      className="min-h-screen bg-indigo-50 p-6"
+      style={{
+        backgroundImage: "url(/static/image3.jpg)",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundAttachment: "fixed",
+      }}
+    >
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
             <div className="flex items-center space-x-3">
               <Brush className="h-10 w-10 text-indigo-600 rotate-12" />
-              <h1 className="text-5xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 animate-pulse-slow drop-shadow-sm">
+              <h1 className="text-5xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 drop-shadow-sm">
                 SkribblAI
               </h1>
             </div>
@@ -202,7 +210,7 @@ const Lobby: React.FC = () => {
           </div>
           <button
             onClick={handleSignOut}
-            className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-md shadow-lg hover:from-red-600 hover:to-orange-600 transition-all duration-300"
+            className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-md shadow-lg hover:from-indigo-700 hover:to-purple-700 transition-all duration-300"
           >
             <LogOut className="h-5 w-5" />
             <span>Sign Out</span>
@@ -210,7 +218,7 @@ const Lobby: React.FC = () => {
         </div>
 
         {/* Create Game Section */}
-        <div className="bg-white/70 backdrop-blur-md rounded-xl shadow-xl ring-1 ring-indigo-100 p-6 mb-8">
+        <div className="bg-white/70 backdrop-blur-md rounded-xl shadow-xl ring-1 ring-indigo-100 p-6 mb-8 border-2 border-black">
           <h2 className="text-3xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
             Create New Game
           </h2>
@@ -290,7 +298,7 @@ const Lobby: React.FC = () => {
         </div>
 
         {/* Available Games */}
-        <div className="bg-white/70 backdrop-blur-md rounded-xl shadow-xl ring-1 ring-indigo-100 p-6">
+        <div className="bg-white/70 backdrop-blur-md rounded-xl shadow-xl ring-1 ring-indigo-100 p-6 border-2 border-black">
           <h2 className="text-3xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
             Available Games
           </h2>
@@ -312,7 +320,7 @@ const Lobby: React.FC = () => {
                 return (
                   <div
                     key={game.id}
-                    className={`border border-transparent bg-white/80 backdrop-blur-sm rounded-lg p-4 hover:shadow-xl hover:-translate-y-1 transform transition-all ${
+                    className={`border-2 border-black bg-white/80 backdrop-blur-sm rounded-lg p-4 hover:shadow-xl hover:-translate-y-1 transform transition-all ${
                       isFull ? "opacity-60" : ""
                     }`}
                   >

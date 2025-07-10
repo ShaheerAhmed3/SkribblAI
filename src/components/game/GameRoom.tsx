@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase, Game, GamePlayer, ChatMessage } from "../../lib/supabase";
-import { ArrowLeft, Send } from "lucide-react";
+import { Home, Send, Brush, ArrowLeft } from "lucide-react";
 import toast from "react-hot-toast";
 import DrawingCanvas from "./DrawingCanvas";
 import { loadWordList } from "../../lib/wordList";
@@ -937,21 +937,33 @@ const GameRoom: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-indigo-50">
+    <div
+      className="min-h-screen bg-indigo-50"
+      style={{
+        backgroundImage: "url(/static/image3.jpg)",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundAttachment: "fixed",
+      }}
+    >
       {/* Header */}
-      <div className="bg-white shadow-md border-b">
+      <div className="bg-white shadow-md border-2 border-black">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <button
                 onClick={leaveGame}
-                className="flex items-center space-x-2 text-indigo-600 hover:text-purple-700 transition-colors"
+                className="flex items-center space-x-2 px-3 py-2 border-2 border-black rounded-md text-indigo-600 hover:text-purple-700 hover:bg-gray-50 transition-colors"
               >
                 <ArrowLeft className="h-5 w-5" />
-                <span>Back to Lobby</span>
+                <Home className="h-8 w-8" />
               </button>
               <div>
-                <h1 className="text-xl font-semibold">{game.name}</h1>
+                <h1 className="text-xl font-semibold">Room: {game.name}</h1>
+              </div>
+            </div>
+            <div className="flex items-center space-x-6">
+              <div className="text-right">
                 <p className="text-sm text-gray-600">
                   Showdown {currentShowdownInfo.current}/
                   {currentShowdownInfo.total} • Round{" "}
@@ -959,15 +971,15 @@ const GameRoom: React.FC = () => {
                   {players.length} players
                 </p>
               </div>
-            </div>
-            {gameStatus === "playing" && (
-              <div className="text-center">
-                <div className="text-2xl font-extrabold text-indigo-600 animate-pulse-slow">
-                  {timeLeft}s
+              {gameStatus === "playing" && (
+                <div className="text-center">
+                  <div className="text-2xl font-extrabold text-indigo-600">
+                    {timeLeft}s
+                  </div>
+                  <div className="text-sm text-gray-600">Time remaining</div>
                 </div>
-                <div className="text-sm text-gray-600">Time remaining</div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -976,7 +988,7 @@ const GameRoom: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           {/* Players List */}
           <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg shadow-sm p-4">
+            <div className="bg-white rounded-lg shadow-sm p-4 border-2 border-black">
               <h3 className="font-semibold mb-4">Players</h3>
               <div className="space-y-2">
                 {[...players]
@@ -1011,8 +1023,8 @@ const GameRoom: React.FC = () => {
                           </span>
                         )}
                         {player.user_id === currentDrawer && (
-                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                            Drawing
+                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded flex items-center">
+                            <Brush className="h-3 w-3" />
                           </span>
                         )}
                         {gameStatus === "playing" &&
@@ -1034,7 +1046,7 @@ const GameRoom: React.FC = () => {
 
           {/* Game Area */}
           <div className="lg:col-span-3">
-            <div className="bg-white rounded-lg shadow-sm p-4">
+            <div className="bg-white rounded-lg shadow-sm p-4 border-2 border-black">
               {gameStatus === "waiting" ? (
                 <div className="text-center py-12">
                   <h3 className="text-xl font-semibold mb-4">
@@ -1049,7 +1061,7 @@ const GameRoom: React.FC = () => {
                   {players.length >= 2 && (
                     <button
                       onClick={startGame}
-                      className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-md shadow-lg hover:from-indigo-600 hover:to-purple-700 transition-all duration-300 animate-pulse-slow"
+                      className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-md shadow-lg hover:from-indigo-600 hover:to-purple-700 transition-all duration-300"
                     >
                       Start Game
                     </button>
@@ -1215,7 +1227,7 @@ const GameRoom: React.FC = () => {
 
           {/* Chat */}
           <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg shadow-sm h-96 flex flex-col">
+            <div className="bg-white rounded-lg shadow-sm h-96 flex flex-col border-2 border-black">
               <div className="p-4 border-b">
                 <h3 className="font-semibold">Chat</h3>
               </div>
