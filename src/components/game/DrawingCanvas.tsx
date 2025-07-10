@@ -485,7 +485,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
   return (
     <div>
-      <div className="canvas-container relative rounded-lg overflow-hidden shadow-lg ring-2 ring-indigo-300">
+      <div className="canvas-container relative rounded-lg overflow-hidden shadow-lg ring-2 ring-indigo-300 border-2 border-black">
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-75 rounded-lg z-10">
             <div className="text-gray-500">Loading canvas...</div>
@@ -496,7 +496,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       {/* Palette / Tools */}
       {!readOnly && (
-        <div className="mt-4 p-4 bg-gray-100 rounded-lg">
+        <div className="mt-4 p-4 bg-gray-100 rounded-lg border-2 border-black">
           <div className="flex flex-wrap items-center gap-6 justify-start">
             {/* Color Palette - horizontal grid */}
             <div className="flex flex-col gap-2 order-1">
